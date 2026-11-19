@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { getHeaderUser } from "@/lib/auth-user";
+import { ProjectName } from "@/components/shared/branding-provider";
 import DashboardModule from "@/modules/dashboard";
 
 export const instant = false;
@@ -33,7 +34,7 @@ export default async function Page() {
             <Breadcrumb>
               <BreadcrumbList className="min-w-0 overflow-hidden">
                 <BreadcrumbItem className="hidden md:block shrink-0">
-                  <BreadcrumbLink href="/dashboard">TicketFlow</BreadcrumbLink>
+                  <BreadcrumbLink href="/dashboard"><ProjectName /></BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                 <BreadcrumbItem className="min-w-0 overflow-hidden">

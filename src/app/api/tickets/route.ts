@@ -10,9 +10,11 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Filter tickets so only the tickets created by the logged-in user are returned
     const { data: tickets, error } = await supabase
       .from("tickets")
       .select("*, system_types(name), profiles:client_id(full_name, email)")
+      .eq("client_id", user.id)
       .order("created_at", { ascending: false });
 
     if (error) {

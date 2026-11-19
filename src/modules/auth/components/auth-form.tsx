@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LifeBuoy, ArrowRight, Loader2, AlertCircle } from "lucide-react";
+import { BrandLogo, ProjectName } from "@/components/shared/branding-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,10 +17,8 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { UserRole } from "@/types/ticket";
 
 export function AuthForm() {
-  const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("login");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -29,7 +27,6 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<UserRole>("CLIENT");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +67,7 @@ export function AuthForm() {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, fullName, role }),
+        body: JSON.stringify({ email, password, fullName, role: "CLIENT" }),
       });
 
       const data = await res.json();
@@ -100,11 +97,12 @@ export function AuthForm() {
   return (
     <Card className="w-full max-w-md border-border/80 shadow-2xl backdrop-blur-md">
       <CardHeader className="text-center space-y-2 pb-4">
-        <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md ring-4 ring-primary/20">
-          <LifeBuoy className="size-6" />
-        </div>
+        <BrandLogo
+          className="mx-auto size-12 rounded-2xl"
+          fallback={<LifeBuoy className="size-6" />}
+        />
         <CardTitle className="text-2xl font-bold tracking-tight">
-          Welcome to TicketFlow
+          Welcome to <ProjectName />
         </CardTitle>
         <CardDescription>
           Sign in or create an account to access your role workspace
@@ -215,21 +213,6 @@ export function AuthForm() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-role">Account Role</Label>
-                <select
-                  id="reg-role"
-                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as UserRole)}
-                >
-                  <option value="CLIENT" className="bg-popover text-popover-foreground">Client (Submit Tickets)</option>
-                  <option value="PM" className="bg-popover text-popover-foreground">Project Manager (Triage & Assign)</option>
-                  <option value="DEV" className="bg-popover text-popover-foreground">Developer (Resolve Bugs)</option>
-                  <option value="ADMIN" className="bg-popover text-popover-foreground">Admin (System Setup)</option>
-                </select>
               </div>
 
               <Button type="submit" className="w-full mt-2" disabled={loading}>

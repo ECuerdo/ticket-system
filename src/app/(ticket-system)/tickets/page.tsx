@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { getHeaderUser } from "@/lib/auth-user";
+import { ProjectName } from "@/components/shared/branding-provider";
 import TicketsModule from "@/modules/tickets";
 
 export const instant = false;
@@ -20,7 +21,7 @@ export default async function Page() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b shadow-xs bg-background sm:h-16 overflow-hidden">
+      <header className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b border-border/70 shadow-2xs bg-background/80 backdrop-blur-md sm:h-16 overflow-hidden">
         <div className="flex h-full min-w-0 items-center gap-2 px-3 sm:px-4 overflow-hidden">
           <SidebarTrigger className="-ml-1 shrink-0" />
 
@@ -33,7 +34,7 @@ export default async function Page() {
             <Breadcrumb>
               <BreadcrumbList className="min-w-0 overflow-hidden">
                 <BreadcrumbItem className="hidden md:block shrink-0">
-                  <BreadcrumbLink href="/dashboard">TicketFlow</BreadcrumbLink>
+                  <BreadcrumbLink href="/dashboard"><ProjectName /></BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                 <BreadcrumbItem className="min-w-0 overflow-hidden">

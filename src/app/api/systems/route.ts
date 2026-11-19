@@ -16,17 +16,41 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const { data: systems, error } = await supabase
+    const { data: systems, error: sysErr } = await supabase
       .from("system_types")
       .select("*, system_choices(*)")
       .eq("active", true)
       .order("name", { ascending: true });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    // Fetch global categories (system_type_id IS NULL)
+    const { data: globalChoices, error: choiceErr } = await supabase
+      .from("system_choices")
+      .select("*")
+      .is("system_type_id", null)
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+
+    if (sysErr) {
+      return NextResponse.json({ error: sysErr.message }, { status: 400 });
+    }
+    if (choiceErr) {
+      return NextResponse.json({ error: choiceErr.message }, { status: 400 });
     }
 
-    return NextResponse.json({ systems });
+    // Merge global choices into each system so they are always available
+    const enrichedSystems = (systems || []).map((s) => {
+      const systemSpecific = s.system_choices || [];
+      const combined = [...(globalChoices || []), ...systemSpecific];
+      return {
+        ...s,
+        system_choices: combined,
+      };
+    });
+
+    return NextResponse.json({
+      systems: enrichedSystems,
+      globalChoices: globalChoices || [],
+    });
   } catch {
     return NextResponse.json(
       { error: "Failed to fetch systems" },
@@ -34,4 +58,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-
