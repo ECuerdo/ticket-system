@@ -14,6 +14,7 @@ import { LogOut, User, Sun, Moon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/shared/theme-provider";
 import { NotificationBell } from "@/components/shared/notification-bell";
+import { createClient } from "@/lib/supabase/client";
 
 export interface HeaderUser {
   id?: string;
@@ -28,9 +29,21 @@ export function NavUser({ user }: { user: HeaderUser }) {
   const { isDark, toggleTheme } = useTheme();
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch {
+      // Continue even if client-side signOut fails
+    }
+
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Continue even if fetch fails
+    }
+
+    // Replace current history entry with landing page and popup auth open
+    window.location.replace("/?auth=login");
   };
 
   const initials = user.name

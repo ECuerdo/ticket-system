@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { connection } from "next/server";
 import { PublicLandingView } from "@/modules/landing/public-landing-view";
@@ -13,9 +14,11 @@ export default async function PublicLandingPage() {
   const totalActive: number = landingData?.total_active ?? randomTickets.length;
 
   return (
-    <PublicLandingView
-      randomTickets={randomTickets}
-      totalActive={totalActive}
-    />
+    <Suspense fallback={null}>
+      <PublicLandingView
+        randomTickets={randomTickets}
+        totalActive={totalActive}
+      />
+    </Suspense>
   );
 }
