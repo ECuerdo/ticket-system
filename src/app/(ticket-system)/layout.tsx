@@ -6,6 +6,7 @@ import { connection } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/shared/app-sidebar";
+import { AuthCacheGuard } from "@/components/shared/auth-cache-guard";
 
 export const instant = false;
 
@@ -31,7 +32,7 @@ export default async function TicketSystemLayout({
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect("/?auth=login");
   }
 
   const { data: profile } = await supabase
@@ -51,6 +52,7 @@ export default async function TicketSystemLayout({
 
   return (
     <BrandingProvider value={settings}>
+      <AuthCacheGuard />
       <style
         dangerouslySetInnerHTML={{
           __html: buildThemeCss(settings.primary_color, settings.font_family, settings.font_size),

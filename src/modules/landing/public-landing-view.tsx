@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   LifeBuoy,
   ShieldCheck,
@@ -53,8 +54,29 @@ export function PublicLandingView({
   randomTickets,
   totalActive,
 }: PublicLandingViewProps) {
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<"login" | "register">("login");
+  const searchParams = useSearchParams();
+  const authParam = searchParams?.get("auth");
+
+  const [authModalOpen, setAuthModalOpen] = useState(
+    authParam === "login" || authParam === "register"
+  );
+  const [authModalTab, setAuthModalTab] = useState<"login" | "register">(
+    authParam === "register" ? "register" : "login"
+  );
+
+  useEffect(() => {
+    if (authParam === "login" || authParam === "register") {
+      setAuthModalTab(authParam);
+      setAuthModalOpen(true);
+    }
+  }, [authParam]);
+
+  const handleModalOpenChange = (open: boolean) => {
+    setAuthModalOpen(open);
+    if (!open && authParam) {
+      window.history.replaceState(null, "", "/");
+    }
+  };
 
   const openAuth = (tab: "login" | "register" = "login") => {
     setAuthModalTab(tab);
@@ -510,7 +532,7 @@ export function PublicLandingView({
       {/* Auth Pop-up Dialog Modal over the Landing Page */}
       <AuthDialog
         open={authModalOpen}
-        onOpenChange={setAuthModalOpen}
+        onOpenChange={handleModalOpenChange}
         defaultTab={authModalTab}
       />
     </div>
