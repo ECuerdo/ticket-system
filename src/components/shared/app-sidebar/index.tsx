@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
   PlusCircle,
@@ -10,8 +10,15 @@ import {
   Code2,
   ShieldCheck,
   Search,
-  LifeBuoy,
+  ChevronDown,
+  Layers,
+  Sliders,
+  Users,
+  UserCheck,
+  Settings,
+  ShieldAlert,
 } from "lucide-react";
+import { useBranding } from "@/components/shared/branding-provider";
 import {
   Sidebar,
   SidebarContent,
@@ -23,72 +30,153 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
-import { NavUser, type HeaderUser } from "@/components/shared/app-sidebar/nav-user";
+import { type HeaderUser } from "@/components/shared/app-sidebar/nav-user";
 
-const navigationModules = [
+const adminSubItems = [
   {
-    title: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-    badge: null,
+    title: "System Types",
+    href: "/admin-workplace?tab=systems",
+    tab: "systems",
+    icon: Layers,
   },
   {
-    title: "Create Ticket",
-    href: "/create-ticket",
-    icon: PlusCircle,
-    badge: null,
+    title: "System Choices",
+    href: "/admin-workplace?tab=choices",
+    tab: "choices",
+    icon: Sliders,
   },
+  {
+    title: "User Roles",
+    href: "/admin-workplace?tab=roles",
+    tab: "roles",
+    icon: Users,
+  },
+  {
+    title: "PM Scope",
+    href: "/admin-workplace?tab=pm-scope",
+    tab: "pm-scope",
+    icon: UserCheck,
+  },
+  {
+    title: "Reports",
+    href: "/admin-workplace?tab=reports",
+    tab: "reports",
+    icon: ShieldAlert,
+  },
+];
+
+const pmSubItems = [
   {
     title: "Tickets",
-    href: "/tickets",
+    href: "/pm-workplace?tab=tickets",
+    tab: "tickets",
     icon: Ticket,
-    badge: null,
   },
   {
-    title: "PM Workplace",
-    href: "/pm-workplace",
-    icon: Kanban,
-    badge: null,
-  },
-  {
-    title: "Dev Workplace",
-    href: "/dev-workplace",
+    title: "My Developers",
+    href: "/pm-workplace?tab=my-devs",
+    tab: "my-devs",
     icon: Code2,
-    badge: null,
   },
+];
+
+const devSubItems = [
   {
-    title: "Admin Workplace",
-    href: "/admin-workplace",
-    icon: ShieldCheck,
-    badge: null,
+    title: "Tickets",
+    href: "/dev-workplace?tab=tickets",
+    tab: "tickets",
+    icon: Ticket,
   },
 ];
 
 export function AppSidebar({ user }: { user: HeaderUser }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentTab = searchParams.get("tab");
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [pmOpen, setPmOpen] = useState(false);
+  const [devOpen, setDevOpen] = useState(false);
+
+  const isAdminRoute = pathname.startsWith("/admin-workplace");
+  const isPmRoute = pathname.startsWith("/pm-workplace");
+  const isDevRoute = pathname.startsWith("/dev-workplace");
+
+  const navigationModules = [
+    {
+      title: "Dashboard",
+      href: "/dashboard",
+      icon: LayoutDashboard,
+    },
+    {
+      title: "Create Ticket",
+      href: "/create-ticket",
+      icon: PlusCircle,
+    },
+    {
+      title: "My Tickets",
+      href: "/tickets",
+      icon: Ticket,
+    },
+  ];
 
   const filteredItems = navigationModules.filter((item) =>
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const userRole = user.role || "CLIENT";
+  const branding = useBranding();
+  const showSettings = userRole === "ADMIN" && "settings".includes(searchQuery.toLowerCase());
+  const isAdmin = userRole === "ADMIN";
+  const isPM = userRole === "PM" || isAdmin;
+  const isDev = userRole === "DEV" || isAdmin;
+
+  const showPm =
+    isPM &&
+    ("pm workplace".includes(searchQuery.toLowerCase()) ||
+      pmSubItems.some((s) => s.title.toLowerCase().includes(searchQuery.toLowerCase())));
+
+  const showDev =
+    isDev &&
+    ("dev workplace".includes(searchQuery.toLowerCase()) ||
+      devSubItems.some((s) => s.title.toLowerCase().includes(searchQuery.toLowerCase())));
+
+  const showAdmin =
+    isAdmin &&
+    ("admin workplace".includes(searchQuery.toLowerCase()) ||
+      adminSubItems.some((s) => s.title.toLowerCase().includes(searchQuery.toLowerCase())));
 
   return (
     <Sidebar className="border-r border-border bg-sidebar">
       {/* Brand Header */}
       <SidebarHeader className="border-b border-border/70 p-4">
         <Link href="/dashboard" className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-            <LifeBuoy className="size-5" />
+          <div
+            className={`flex size-9 items-center justify-center overflow-hidden rounded-xl ${
+              branding.logo_url
+                ? ""
+                : "bg-primary text-primary-foreground shadow-md shadow-primary/25"
+            }`}
+          >
+            {branding.logo_url ? (
+              <img src={branding.logo_url} alt={branding.project_name} className="size-full object-contain" />
+            ) : (
+              <Layers className="size-5" />
+            )}
           </div>
           <div className="flex flex-col min-w-0">
             <span className="font-heading text-sm font-bold tracking-tight text-sidebar-foreground truncate">
-              TicketFlow
+              {branding.project_name}
             </span>
             <span className="text-[10px] text-muted-foreground uppercase font-mono tracking-wider">
-              Issue Tracking
+              {branding.sidebar_subtitle}
             </span>
           </div>
         </Link>
@@ -101,7 +189,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
             placeholder="Quick search modules"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 text-xs bg-muted/40 border-border/60"
+            className="h-9 pl-8 text-xs bg-muted/40 border-border/60 rounded-xl"
           />
         </div>
       </SidebarHeader>
@@ -124,8 +212,8 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                       isActive={isActive}
                       className={
                         isActive
-                          ? "bg-primary text-primary-foreground font-semibold hover:bg-primary/90 hover:text-primary-foreground"
-                          : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                          ? "bg-primary text-primary-foreground font-semibold rounded-xl shadow-md shadow-primary/20 hover:bg-primary hover:text-primary-foreground"
+                          : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl"
                       }
                     >
                       <Icon className="size-4 shrink-0" />
@@ -134,6 +222,171 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                   </SidebarMenuItem>
                 );
               })}
+
+              {/* PM Workplace with Collapsible Submodules */}
+              {showPm && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={() => setPmOpen((prev) => !prev)}
+                    isActive={isPmRoute}
+                    className="text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl cursor-pointer flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Kanban className="size-4 shrink-0" />
+                      <span className="truncate text-sm font-medium">PM Workplace</span>
+                    </div>
+                    <ChevronDown
+                      className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
+                        pmOpen ? "rotate-0" : "-rotate-90"
+                      }`}
+                    />
+                  </SidebarMenuButton>
+
+                  {pmOpen && (
+                    <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
+                      {pmSubItems.map((sub) => {
+                        const isSubActive =
+                          isPmRoute && (currentTab === sub.tab || (!currentTab && sub.tab === "tickets"));
+                        const SubIcon = sub.icon;
+                        return (
+                          <SidebarMenuSubItem key={sub.tab}>
+                            <SidebarMenuSubButton
+                              render={<Link href={sub.href} />}
+                              isActive={isSubActive}
+                              size="sm"
+                              className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                                isSubActive
+                                  ? "bg-sidebar-accent font-semibold text-primary"
+                                  : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
+                              }`}
+                            >
+                              <SubIcon className="size-3.5 shrink-0" />
+                              <span className="truncate">{sub.title}</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </SidebarMenuSub>
+                  )}
+                </SidebarMenuItem>
+              )}
+
+              {/* Dev Workplace with Collapsible Submodules */}
+              {showDev && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={() => setDevOpen((prev) => !prev)}
+                    isActive={isDevRoute}
+                    className="text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl cursor-pointer flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Code2 className="size-4 shrink-0" />
+                      <span className="truncate text-sm font-medium">Dev Workplace</span>
+                    </div>
+                    <ChevronDown
+                      className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
+                        devOpen ? "rotate-0" : "-rotate-90"
+                      }`}
+                    />
+                  </SidebarMenuButton>
+
+                  {devOpen && (
+                    <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
+                      {devSubItems.map((sub) => {
+                        const isSubActive =
+                          isDevRoute && (currentTab === sub.tab || (!currentTab && sub.tab === "tickets"));
+                        const SubIcon = sub.icon;
+                        return (
+                          <SidebarMenuSubItem key={sub.tab}>
+                            <SidebarMenuSubButton
+                              render={<Link href={sub.href} />}
+                              isActive={isSubActive}
+                              size="sm"
+                              className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                                isSubActive
+                                  ? "bg-sidebar-accent font-semibold text-primary"
+                                  : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
+                              }`}
+                            >
+                              <SubIcon className="size-3.5 shrink-0" />
+                              <span className="truncate">{sub.title}</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </SidebarMenuSub>
+                  )}
+                </SidebarMenuItem>
+              )}
+
+              {/* Admin Workplace with Collapsible Submodules */}
+              {showAdmin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={() => setAdminOpen((prev) => !prev)}
+                    isActive={isAdminRoute}
+                    className="text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl cursor-pointer flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ShieldCheck className="size-4 shrink-0" />
+                      <span className="truncate text-sm font-medium">Admin Workplace</span>
+                    </div>
+                    <ChevronDown
+                      className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
+                        adminOpen ? "rotate-0" : "-rotate-90"
+                      }`}
+                    />
+                  </SidebarMenuButton>
+
+                  {adminOpen && (
+                    <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
+                      {adminSubItems.map((sub) => {
+                        const isSubActive =
+                          isAdminRoute && (currentTab === sub.tab || (!currentTab && sub.tab === "systems"));
+                        const SubIcon = sub.icon;
+                        return (
+                          <SidebarMenuSubItem key={sub.tab}>
+                            <SidebarMenuSubButton
+                              render={<Link href={sub.href} />}
+                              isActive={isSubActive}
+                              size="sm"
+                              className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                                isSubActive
+                                  ? "bg-sidebar-accent font-semibold text-primary"
+                                  : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
+                              }`}
+                            >
+                              <SubIcon className="size-3.5 shrink-0" />
+                              <span className="truncate">{sub.title}</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        );
+                      })}
+                    </SidebarMenuSub>
+                  )}
+                </SidebarMenuItem>
+              )}
+
+              {/* Settings (Admin only) */}
+              {showSettings && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    render={<Link href="/settings" />}
+                    isActive={pathname === "/settings"}
+                    className={
+                      pathname === "/settings"
+                        ? "bg-primary text-primary-foreground font-semibold rounded-xl shadow-md shadow-primary/20 hover:bg-primary hover:text-primary-foreground"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl"
+                    }
+                  >
+                    <Settings className="size-4 shrink-0" />
+                    <span className="truncate text-sm">Settings</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -141,8 +394,8 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
 
       {/* Footer Info */}
       <SidebarFooter className="border-t border-border/70 p-3">
-        <div className="text-[10px] text-muted-foreground text-center font-mono">
-          TicketFlow v2.0 &bull; Supabase
+        <div className="text-[10px] text-muted-foreground text-center font-mono truncate">
+          {branding.project_name} v2.0 &bull; Supabase
         </div>
       </SidebarFooter>
     </Sidebar>

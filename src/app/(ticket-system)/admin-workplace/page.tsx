@@ -1,4 +1,5 @@
 import React, { Suspense } from "react";
+import { redirect } from "next/navigation";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -11,12 +12,17 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { getHeaderUser } from "@/lib/auth-user";
+import { ProjectName } from "@/components/shared/branding-provider";
 import AdminWorkplaceModule from "@/modules/admin-workplace";
 
 export const instant = false;
 
 export default async function Page() {
   const headerUser = await getHeaderUser();
+
+  if (headerUser.role !== "ADMIN") {
+    redirect("/dashboard");
+  }
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -33,7 +39,7 @@ export default async function Page() {
             <Breadcrumb>
               <BreadcrumbList className="min-w-0 overflow-hidden">
                 <BreadcrumbItem className="hidden md:block shrink-0">
-                  <BreadcrumbLink href="/dashboard">TicketFlow</BreadcrumbLink>
+                  <BreadcrumbLink href="/dashboard"><ProjectName /></BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                 <BreadcrumbItem className="min-w-0 overflow-hidden">

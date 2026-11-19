@@ -1,5 +1,7 @@
 import { AuthForm } from "@/modules/auth/components/auth-form";
 
+export const instant = false;
+
 export default function LoginPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 bg-background relative selection:bg-primary/20 selection:text-primary">

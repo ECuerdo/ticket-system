@@ -43,7 +43,7 @@ export interface Ticket {
   systemTypeId: string;
   systemTypeName?: string;
   category?: string;
-  priority: TicketPriority;
+  priority?: TicketPriority | null;
   status: TicketStatus;
   clientId: string;
   clientName?: string;

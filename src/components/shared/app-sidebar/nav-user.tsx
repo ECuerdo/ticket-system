@@ -10,17 +10,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LogOut, User } from "lucide-react";
+import { LogOut, User, Sun, Moon } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useTheme } from "@/components/shared/theme-provider";
+import { NotificationBell } from "@/components/shared/notification-bell";
 
 export interface HeaderUser {
+  id?: string;
   name: string;
   email: string;
+  role?: string;
   avatar?: string;
 }
 
 export function NavUser({ user }: { user: HeaderUser }) {
   const router = useRouter();
+  const { isDark, toggleTheme } = useTheme();
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -37,9 +42,14 @@ export function NavUser({ user }: { user: HeaderUser }) {
         .slice(0, 2)
     : "US";
 
+  const nextModeName = isDark ? "Light Mode" : "Dark Mode";
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="flex items-center gap-2.5 rounded-lg p-1.5 outline-none hover:bg-muted/60 transition-colors cursor-pointer">
+    <div className="flex items-center gap-1.5">
+      <NotificationBell user={user} />
+
+      <DropdownMenu>
+        <DropdownMenuTrigger className="flex items-center gap-2.5 rounded-lg p-1.5 outline-none hover:bg-muted/60 transition-colors cursor-pointer">
         <Avatar className="size-8 rounded-full border border-border">
           <AvatarImage src={user.avatar} alt={user.name} />
           <AvatarFallback className="text-xs font-semibold bg-primary/10 text-primary">
@@ -66,6 +76,31 @@ export function NavUser({ user }: { user: HeaderUser }) {
           </DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => router.push("/profile")}
+          >
+            <User className="size-4 mr-2" />
+            Profile
+          </DropdownMenuItem>
+
+          {/* Menu item that switches its name, icon, and function based on active mode */}
+          <DropdownMenuItem
+            className="cursor-pointer flex items-center justify-between"
+            onClick={toggleTheme}
+          >
+            <div className="flex items-center">
+              {isDark ? (
+                <Sun className="size-4 mr-2 text-amber-500" />
+              ) : (
+                <Moon className="size-4 mr-2 text-indigo-500 dark:text-indigo-400" />
+              )}
+              <span>{nextModeName}</span>
+            </div>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           className="cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
           onClick={handleLogout}
@@ -75,6 +110,7 @@ export function NavUser({ user }: { user: HeaderUser }) {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  </div>
   );
 }
 

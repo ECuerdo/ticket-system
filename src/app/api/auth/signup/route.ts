@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { notifyAdmins } from "@/lib/notifications";
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,6 +45,21 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    // Notify Admins of New Registered User
+    try {
+      await notifyAdmins({
+        type: "USER_REGISTERED",
+        title: "New User Registered",
+        message: `${fullName} (${email}) registered as ${role || "CLIENT"}`,
+        actorId: data.user?.id,
+        actorName: fullName,
+        actionUrl: `/admin-workplace?tab=users`,
+        groupKey: `user-reg-${data.user?.id || email}`,
+      });
+    } catch (notifErr) {
+      console.error("Failed to notify admins of registration:", notifErr);
     }
 
     return NextResponse.json(
