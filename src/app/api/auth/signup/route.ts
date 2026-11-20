@@ -4,7 +4,8 @@ import { notifyAdmins } from "@/lib/notifications";
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password, fullName, role } = await request.json();
+    // A role sent with the request is ignored: every new account starts as CLIENT, and only an admin can change it.
+    const { email, password, fullName } = await request.json();
 
     if (!email || !password || !fullName) {
       return NextResponse.json(
@@ -38,7 +39,6 @@ export async function POST(request: NextRequest) {
       options: {
         data: {
           full_name: fullName,
-          role: role || "CLIENT",
         },
       },
     });
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       await notifyAdmins({
         type: "USER_REGISTERED",
         title: "New User Registered",
-        message: `${fullName} (${email}) registered as ${role || "CLIENT"}`,
+        message: `${fullName} (${email}) registered as CLIENT`,
         actorId: data.user?.id,
         actorName: fullName,
         actionUrl: `/admin-workplace?tab=users`,
