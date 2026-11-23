@@ -15,15 +15,22 @@ export async function updateSession(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
+          const isRemembered = request.cookies.get("remember_me")?.value === "true";
+          const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
+
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
           supabaseResponse = NextResponse.next({
             request,
           });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
+          cookiesToSet.forEach(({ name, value, options }) => {
+            const cookieOptions = {
+              ...options,
+              ...(isRemembered ? { maxAge: ONE_YEAR_SECONDS } : {}),
+            };
+            supabaseResponse.cookies.set(name, value, cookieOptions);
+          });
         },
       },
     }

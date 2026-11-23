@@ -361,7 +361,7 @@ export default function HallOfShameModule() {
                 </div>
                 <CardTitle className="text-lg font-bold pt-2">Most Bug-Prone Systems</CardTitle>
                 <CardDescription className="text-xs">
-                  Pinakamaraming tickets filed (heavy defect frequency)
+                  Highest number of tickets filed (heavy defect frequency)
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">

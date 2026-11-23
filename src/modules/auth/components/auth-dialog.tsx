@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { LifeBuoy, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import { BrandLogo, ProjectName } from "@/components/shared/branding-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +36,19 @@ export function AuthDialog({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+
+  useEffect(() => {
+    try {
+      const savedEmail = localStorage.getItem("remembered_email");
+      if (savedEmail) {
+        setEmail(savedEmail);
+        setRememberMe(true);
+      }
+    } catch {
+      // LocalStorage access catch
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,12 +59,22 @@ export function AuthDialog({
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
 
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to log in.");
+      }
+
+      try {
+        if (rememberMe) {
+          localStorage.setItem("remembered_email", email.trim());
+        } else {
+          localStorage.removeItem("remembered_email");
+        }
+      } catch {
+        // LocalStorage catch
       }
 
       const targetPath = data.redirectPath || "/dashboard";
@@ -177,6 +201,20 @@ export function AuthDialog({
                     onChange={(e) => setPassword(e.target.value)}
                     className="h-9 text-xs"
                   />
+                </div>
+
+                <div className="flex items-center gap-2 pt-0.5">
+                  <Checkbox
+                    id="popup-login-remember"
+                    checked={rememberMe}
+                    onCheckedChange={(checked) => setRememberMe(Boolean(checked))}
+                  />
+                  <Label
+                    htmlFor="popup-login-remember"
+                    className="text-xs text-muted-foreground font-normal cursor-pointer select-none hover:text-foreground"
+                  >
+                    Remember me
+                  </Label>
                 </div>
 
                 <Button type="submit" className="w-full mt-4 h-9 text-xs font-semibold" disabled={loading}>

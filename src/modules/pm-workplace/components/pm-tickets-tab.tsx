@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Clock,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,16 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 interface PMTicketItem {
   id: string;
@@ -53,6 +64,9 @@ export function PmTicketsTab() {
   const [selectedDevId, setSelectedDevId] = useState("");
   const [pmNotes, setPmNotes] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [rejectError, setRejectError] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [isHumanError, setIsHumanError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -102,10 +116,12 @@ export function PmTicketsTab() {
     }
   };
 
-  const handleUpdateStatus = async (status: string, devId?: string) => {
+  const handleUpdateStatus = async (status: string, devId?: string, overrideReason?: string) => {
     if (!selectedTicket) return;
     setSubmitting(true);
+    setActionError(null);
     try {
+      const finalRejectionReason = overrideReason !== undefined ? overrideReason : rejectionReason;
       const res = await fetch(`/api/tickets/${selectedTicket.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -113,7 +129,7 @@ export function PmTicketsTab() {
           status,
           priority: selectedPriority,
           pmNotes,
-          rejectionReason,
+          rejectionReason: finalRejectionReason,
           assignedDevId: devId || selectedDevId || null,
           isHumanError,
         }),
@@ -128,12 +144,33 @@ export function PmTicketsTab() {
       setRejectionReason("");
       setSelectedDevId("");
       setIsHumanError(false);
+      setRejectError(false);
       await loadData();
-    } catch (err: any) {
-      alert(err.message || "Failed to update ticket status");
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setActionError(err.message);
+      } else {
+        setActionError("Failed to update ticket status");
+      }
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openRejectDialog = () => {
+    setActionError(null);
+    setRejectError(false);
+    setIsRejectDialogOpen(true);
+  };
+
+  const handleConfirmReject = () => {
+    if (!rejectionReason.trim()) {
+      setRejectError(true);
+      return;
+    }
+    setRejectError(false);
+    setIsRejectDialogOpen(false);
+    handleUpdateStatus("REJECTED", undefined, rejectionReason);
   };
 
   const getPriorityBadge = (p?: string | null) => {
@@ -268,6 +305,9 @@ export function PmTicketsTab() {
                           setPmNotes(t.pm_notes || "");
                           setSelectedDevId(t.assigned_dev_id || "");
                           setIsHumanError(Boolean(t.is_human_error));
+                          setRejectionReason(t.rejection_reason || "");
+                          setRejectError(false);
+                          setActionError(null);
                         }}
                       >
                         <div className="flex items-center justify-between">
@@ -381,12 +421,19 @@ export function PmTicketsTab() {
               </CardHeader>
 
               <CardContent className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
+                {actionError && (
+                  <Alert variant="destructive" className="py-2.5 text-xs">
+                    <AlertCircle className="size-4" />
+                    <AlertDescription>{actionError}</AlertDescription>
+                  </Alert>
+                )}
+
                 {/* Contextual Status Banner */}
                 {selectedTicket.status === "OPEN" && (
                   <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-2.5 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2">
                     <Inbox className="size-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                     <div>
-                      <span className="font-semibold">New Ticket Submitted:</span> Verify the issue, choose priority, and confirm as bug or dispatch to a developer.
+                      <span className="font-semibold">New Ticket Submitted:</span> Verify the issue, set priority, and click &quot;Confirm Bug&quot; before assigning to a developer.
                     </div>
                   </div>
                 )}
@@ -480,33 +527,49 @@ export function PmTicketsTab() {
 
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="assign-dev" className="text-xs font-semibold">
-                      {selectedTicket.status === "IN_DEVELOPMENT" ? "Assigned Developer (Change to Reassign)" : "Assign / Dispatch to Developer"}
-                    </Label>
-                    <Link
-                      href="/pm-workplace?tab=my-devs"
-                      className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                    <Label
+                      htmlFor="assign-dev"
+                      className={cn("text-xs font-semibold", selectedTicket.status === "OPEN" && "text-muted-foreground")}
                     >
-                      Manage Team &rarr;
-                    </Link>
+                      {selectedTicket.status === "IN_DEVELOPMENT"
+                        ? "Assigned Developer (Change to Reassign)"
+                        : "Assign / Dispatch to Developer"}
+                    </Label>
+                    {selectedTicket.status !== "OPEN" && (
+                      <Link
+                        href="/pm-workplace?tab=my-devs"
+                        className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                      >
+                        Manage Team &rarr;
+                      </Link>
+                    )}
                   </div>
-                  <select
-                    id="assign-dev"
-                    className="flex h-8 w-full rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                    value={selectedDevId}
-                    onChange={(e) => setSelectedDevId(e.target.value)}
-                  >
-                    <option value="">-- Choose from My Developers --</option>
-                    {myDevs.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.full_name} ({d.email})
-                      </option>
-                    ))}
-                  </select>
-                  {myDevs.length === 0 && (
-                    <p className="text-[11px] text-amber-500 pt-0.5">
-                      No developers assigned yet. Go to &quot;My Developers&quot; to build your roster.
-                    </p>
+                  {selectedTicket.status === "OPEN" ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      <Clock className="size-3.5 text-muted-foreground shrink-0" />
+                      <span>Confirm bug first before assigning a developer. Accessible once status is <strong>Confirmed Bug</strong>.</span>
+                    </div>
+                  ) : (
+                    <>
+                      <select
+                        id="assign-dev"
+                        className="flex h-8 w-full rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                        value={selectedDevId}
+                        onChange={(e) => setSelectedDevId(e.target.value)}
+                      >
+                        <option value="">-- Choose from My Developers --</option>
+                        {myDevs.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.full_name} ({d.email})
+                          </option>
+                        ))}
+                      </select>
+                      {myDevs.length === 0 && (
+                        <p className="text-[11px] text-amber-500 pt-0.5">
+                          No developers assigned yet. Go to &quot;My Developers&quot; to build your roster.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -526,16 +589,34 @@ export function PmTicketsTab() {
 
                 {selectedTicket.status !== "RESOLVED" && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="reject-reason" className="text-xs font-semibold text-muted-foreground">
+                    <Label
+                      htmlFor="reject-reason"
+                      className={cn(
+                        "text-xs font-semibold text-muted-foreground",
+                        rejectError && !rejectionReason.trim() && "text-destructive"
+                      )}
+                    >
                       Rejection Reason (If rejecting ticket)
                     </Label>
                     <Input
                       id="reject-reason"
                       placeholder="e.g. Working as intended / Insufficient details"
-                      className="text-xs"
+                      className={cn(
+                        "text-xs transition-colors",
+                        rejectError && !rejectionReason.trim() && "border-destructive focus-visible:ring-destructive focus-visible:border-destructive"
+                      )}
                       value={rejectionReason}
-                      onChange={(e) => setRejectionReason(e.target.value)}
+                      onChange={(e) => {
+                        setRejectionReason(e.target.value);
+                        if (e.target.value.trim()) setRejectError(false);
+                      }}
                     />
+                    {rejectError && !rejectionReason.trim() && (
+                      <p className="text-[11px] text-destructive font-medium flex items-center gap-1">
+                        <AlertCircle className="size-3" />
+                        Please enter a rejection reason first.
+                      </p>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -543,46 +624,28 @@ export function PmTicketsTab() {
               <CardFooter className="shrink-0 flex flex-col gap-2 border-t border-border p-4 bg-muted/20">
                 {/* 1. When ticket is newly OPEN */}
                 {selectedTicket.status === "OPEN" && (
-                  <>
-                    <div className="grid grid-cols-2 gap-2 w-full">
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="bg-purple-600 hover:bg-purple-700 text-white"
-                        disabled={submitting}
-                        onClick={() => handleUpdateStatus("CONFIRMED_BUG")}
-                      >
-                        <CheckCircle2 className="size-3.5 mr-1" />
-                        Confirm Bug
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-destructive hover:bg-destructive/10"
-                        disabled={submitting}
-                        onClick={() => {
-                          if (!rejectionReason.trim()) {
-                            alert("Please enter a rejection reason first.");
-                            return;
-                          }
-                          handleUpdateStatus("REJECTED");
-                        }}
-                      >
-                        <XCircle className="size-3.5 mr-1" />
-                        Reject
-                      </Button>
-                    </div>
-
+                  <div className="grid grid-cols-2 gap-2 w-full">
                     <Button
+                      variant="default"
                       size="sm"
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
-                      disabled={submitting || !selectedDevId}
-                      onClick={() => handleUpdateStatus("IN_DEVELOPMENT", selectedDevId)}
+                      className="bg-purple-600 hover:bg-purple-700 text-white"
+                      disabled={submitting}
+                      onClick={() => handleUpdateStatus("CONFIRMED_BUG")}
                     >
-                      <UserCheck className="size-3.5 mr-1" />
-                      Assign & Dispatch to Dev
+                      <CheckCircle2 className="size-3.5 mr-1" />
+                      Confirm Bug
                     </Button>
-                  </>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10"
+                      disabled={submitting}
+                      onClick={openRejectDialog}
+                    >
+                      <XCircle className="size-3.5 mr-1" />
+                      Reject
+                    </Button>
+                  </div>
                 )}
 
                 {/* 2. When Bug is CONFIRMED */}
@@ -602,13 +665,7 @@ export function PmTicketsTab() {
                       size="sm"
                       className="w-full text-destructive hover:bg-destructive/10"
                       disabled={submitting}
-                      onClick={() => {
-                        if (!rejectionReason.trim()) {
-                          alert("Please enter a rejection reason first.");
-                          return;
-                        }
-                        handleUpdateStatus("REJECTED");
-                      }}
+                      onClick={openRejectDialog}
                     >
                       <XCircle className="size-3.5 mr-1" />
                       Reject Ticket
@@ -660,13 +717,7 @@ export function PmTicketsTab() {
                         size="sm"
                         className="w-full text-destructive hover:bg-destructive/10"
                         disabled={submitting}
-                        onClick={() => {
-                          if (!rejectionReason.trim()) {
-                            alert("Please enter a rejection reason first.");
-                            return;
-                          }
-                          handleUpdateStatus("REJECTED");
-                        }}
+                        onClick={openRejectDialog}
                       >
                         <XCircle className="size-3.5 mr-1" />
                         Reject / Cancel
@@ -739,6 +790,84 @@ export function PmTicketsTab() {
           )}
         </div>
       </div>
+
+      {/* Rejection Confirmation Modal */}
+      <Dialog
+        open={isRejectDialogOpen}
+        onOpenChange={(open) => {
+          setIsRejectDialogOpen(open);
+          if (!open) {
+            setRejectError(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <XCircle className="size-5 text-destructive" />
+              Reject Ticket {selectedTicket?.ticket_number}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Please provide a reason for rejecting this ticket. This reason will be logged and visible to the reporter.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 py-2">
+            <Label
+              htmlFor="modal-reject-reason"
+              className={cn("text-xs font-semibold", rejectError && !rejectionReason.trim() && "text-destructive")}
+            >
+              Rejection Reason <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="modal-reject-reason"
+              placeholder="e.g. Working as intended, duplicate ticket, or insufficient reproduction details..."
+              rows={3}
+              className={cn(
+                "text-xs transition-colors",
+                rejectError && !rejectionReason.trim() && "border-destructive focus-visible:ring-destructive focus-visible:border-destructive"
+              )}
+              value={rejectionReason}
+              onChange={(e) => {
+                setRejectionReason(e.target.value);
+                if (e.target.value.trim()) {
+                  setRejectError(false);
+                }
+              }}
+            />
+            {rejectError && !rejectionReason.trim() && (
+              <p className="text-[11px] text-destructive font-medium flex items-center gap-1">
+                <AlertCircle className="size-3" />
+                Please enter a rejection reason first.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsRejectDialogOpen(false);
+                setRejectError(false);
+              }}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={submitting}
+              onClick={handleConfirmReject}
+            >
+              {submitting ? "Rejecting..." : "Confirm Rejection"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

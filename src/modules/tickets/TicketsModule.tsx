@@ -33,13 +33,16 @@ interface TicketListItem {
   pm_notes?: string;
   dev_notes?: string;
   rejection_reason?: string;
+  is_human_error?: boolean;
   attachments?: Array<{ name: string; url: string; size: number; type: string }>;
   system_types?: { name: string };
+  profiles?: { full_name?: string; email?: string };
 }
 
 export default function TicketsModule() {
   const router = useRouter();
   const [tickets, setTickets] = useState<TicketListItem[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -54,6 +57,7 @@ export default function TicketsModule() {
         const ticketsJson = await ticketsRes.json();
         if (!ignore) {
           setTickets(ticketsJson.tickets || []);
+          setIsAdmin(Boolean(ticketsJson.isAdmin));
         }
       } catch {
         console.error("Failed to load tickets");
@@ -146,7 +150,9 @@ export default function TicketsModule() {
     const matchesSearch =
       t.title?.toLowerCase().includes(search.toLowerCase()) ||
       t.ticket_number?.toLowerCase().includes(search.toLowerCase()) ||
-      t.system_types?.name?.toLowerCase().includes(search.toLowerCase());
+      t.system_types?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      t.profiles?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+      t.profiles?.email?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = filterStatus === "ALL" || t.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -165,9 +171,20 @@ export default function TicketsModule() {
             <Ticket className="size-5" />
           </div>
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Support Tickets</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+                {isAdmin ? "All Support Tickets" : "My Support Tickets"}
+              </h1>
+              {isAdmin && (
+                <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-[10px] font-semibold">
+                  Admin (All Systems)
+                </Badge>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">
-              Search, filter, and track all tickets and issue reports you have submitted.
+              {isAdmin
+                ? "Overview of all tickets across all systems, clients, and staff."
+                : "Search, filter, and track all tickets and issue reports you have submitted."}
             </p>
           </div>
         </div>
@@ -276,10 +293,12 @@ export default function TicketsModule() {
       <Card className="border-border/70 shadow-xs rounded-2xl overflow-hidden bg-card">
         <CardHeader className="pb-3 border-b border-border/60">
           <CardTitle className="text-base font-semibold">
-            My Tickets ({filteredTickets.length})
+            {isAdmin ? "All Tickets" : "My Tickets"} ({filteredTickets.length})
           </CardTitle>
           <CardDescription className="text-xs">
-            Viewing your active and historical submitted tickets
+            {isAdmin
+              ? "Viewing all active and historical tickets across all systems and reporters"
+              : "Viewing your active and historical submitted tickets"}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-4 space-y-4">
@@ -321,7 +340,7 @@ export default function TicketsModule() {
                       <div className="flex-1 min-w-0 space-y-2">
                         {/* Top row */}
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-xs font-bold text-foreground group-hover/ticket:text-primary transition-colors">
                               {t.ticket_number}
                             </span>
@@ -329,9 +348,22 @@ export default function TicketsModule() {
                             <span className="text-xs font-medium text-muted-foreground">
                               {t.system_types?.name || "General"}
                             </span>
+                            {t.profiles?.full_name && (
+                              <>
+                                <span className="text-muted-foreground/60 text-xs">•</span>
+                                <span className="text-xs text-muted-foreground">
+                                  Client: <strong className="text-foreground font-medium">{t.profiles.full_name}</strong>
+                                </span>
+                              </>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2">
+                            {t.is_human_error && (
+                              <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                                Human Error
+                              </Badge>
+                            )}
                             {getPriorityBadge(t.priority)}
                             {getStatusBadge(t.status)}
                           </div>

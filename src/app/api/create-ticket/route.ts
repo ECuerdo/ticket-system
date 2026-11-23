@@ -6,9 +6,16 @@ export async function POST(request: NextRequest) {
   try {
     const { title, description, systemTypeId, choiceId, priority, attachments, linkUrl } = await request.json();
 
-    if (!title || !description || !systemTypeId) {
+    if (!title?.trim() || !description?.trim() || !systemTypeId || !choiceId) {
       return NextResponse.json(
-        { error: "Title, description, and system type are required." },
+        { error: "Title, description, target system, and issue category are required." },
+        { status: 400 }
+      );
+    }
+
+    if (!attachments || !Array.isArray(attachments) || attachments.length === 0) {
+      return NextResponse.json(
+        { error: "At least one attachment (screenshot or PDF) is required." },
         { status: 400 }
       );
     }

@@ -357,7 +357,7 @@ export default function HallOfFameModule() {
                 </div>
                 <CardTitle className="text-lg font-bold pt-2">Lowest Ticket Volume</CardTitle>
                 <CardDescription className="text-xs">
-                  Madalang magkaroon ng ticket (cleanest & highest quality systems)
+                  Fewest tickets filed (cleanest & highest quality systems)
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -481,7 +481,7 @@ export default function HallOfFameModule() {
                       <ShieldCheck className="size-4 text-emerald-500" />
                     </CardTitle>
                     <CardDescription className="text-xs">
-                      Lower volume indicates cleaner systems (madalang ang issue)
+                      Lower volume indicates cleaner systems (fewest defects reported)
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="h-64 pt-2">
