@@ -105,7 +105,7 @@ export async function POST(
       try {
         const { data: targetComment } = await supabase
           .from("ticket_comments")
-          .select("user_id, ticket:tickets(id, ticket_number, title)")
+          .select("user_id, ticket:tickets(id, ticket_number, title, status)")
           .eq("id", commentId)
           .single();
 
@@ -115,14 +115,15 @@ export async function POST(
           await sendNotification({
             userId: targetComment.user_id,
             type: "TICKET_REACT",
-            title: `${ticketData?.ticket_number || "TCK"} - ${ticketData?.title || "Ticket"}`,
+            title: ticketData?.title || "Ticket",
             message: `${actorName} reacted ${emoji} to your message`,
             ticketId: ticketData?.id || ticketId,
             ticketNumber: ticketData?.ticket_number,
+            ticketStatus: ticketData?.status,
             actorId: user.id,
             actorName,
             actionUrl: `/tickets/${ticketData?.id || ticketId}`,
-            groupKey: `ticket-react-${commentId}`,
+            groupKey: `ticket-${ticketData?.id || ticketId}`,
           });
         }
       } catch (err) {

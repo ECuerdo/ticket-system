@@ -85,7 +85,7 @@ export async function POST(
     await notifyAdmins(
       {
         type: "REPORT_NEW",
-        title: `Incident Report: ${ticket.ticket_number || "TCK"}`,
+        title: "Incident Report",
         message: `${reporterName} reported: "${reason.trim().slice(0, 60)}"`,
         ticketId: ticket.id,
         ticketNumber: ticket.ticket_number,

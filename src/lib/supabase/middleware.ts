@@ -42,6 +42,8 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/admin-workplace") ||
     pathname.startsWith("/pm-workplace") ||
     pathname.startsWith("/dev-workplace") ||
+    pathname.startsWith("/hall-of-fame") ||
+    pathname.startsWith("/hall-of-shame") ||
     pathname.startsWith("/profile") ||
     pathname.startsWith("/settings");
 

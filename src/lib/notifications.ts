@@ -25,6 +25,7 @@ export interface SendNotificationParams {
   message: string;
   ticketId?: string;
   ticketNumber?: string;
+  ticketStatus?: string;
   actorId?: string;
   actorName?: string;
   actionUrl?: string;
@@ -37,15 +38,36 @@ export interface SendNotificationParams {
 export async function sendNotification(params: SendNotificationParams) {
   try {
     const supabase = getNotifyClient();
+    const targetGroup = params.ticketId
+      ? `ticket-${params.ticketId}`
+      : params.groupKey || null;
 
-    // Stacking check: if an unread notification with the same group_key exists, stack it
-    if (params.groupKey) {
+    // 1. Try PostgreSQL RPC function (runs with SECURITY DEFINER to bypass RLS)
+    const { error: rpcError } = await supabase.rpc("send_or_stack_notification", {
+      p_user_id: params.userId,
+      p_type: params.type,
+      p_title: params.title,
+      p_message: params.message,
+      p_ticket_id: params.ticketId || null,
+      p_ticket_number: params.ticketNumber || null,
+      p_actor_id: params.actorId || null,
+      p_actor_name: params.actorName || null,
+      p_action_url: params.actionUrl || null,
+      p_group_key: targetGroup,
+      p_ticket_status: params.ticketStatus || null,
+    });
+
+    if (!rpcError) {
+      return;
+    }
+
+    // 2. Fallback stacking query
+    if (targetGroup) {
       const { data: existing } = await supabase
         .from("notifications")
         .select("id, stack_count")
         .eq("user_id", params.userId)
-        .eq("group_key", params.groupKey)
-        .eq("is_read", false)
+        .or(`group_key.eq.${targetGroup},ticket_id.eq.${params.ticketId || "00000000-0000-0000-0000-000000000000"}`)
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -55,11 +77,15 @@ export async function sendNotification(params: SendNotificationParams) {
           .from("notifications")
           .update({
             stack_count: (existing.stack_count || 1) + 1,
+            type: params.type,
             title: params.title,
             message: params.message,
+            ticket_status: params.ticketStatus || null,
             actor_id: params.actorId || null,
             actor_name: params.actorName || null,
             action_url: params.actionUrl || null,
+            group_key: targetGroup,
+            is_read: false,
             updated_at: new Date().toISOString(),
           })
           .eq("id", existing.id);
@@ -76,10 +102,11 @@ export async function sendNotification(params: SendNotificationParams) {
       message: params.message,
       ticket_id: params.ticketId || null,
       ticket_number: params.ticketNumber || null,
+      ticket_status: params.ticketStatus || null,
       actor_id: params.actorId || null,
       actor_name: params.actorName || null,
       action_url: params.actionUrl || null,
-      group_key: params.groupKey || null,
+      group_key: targetGroup,
       stack_count: 1,
       is_read: false,
       created_at: new Date().toISOString(),

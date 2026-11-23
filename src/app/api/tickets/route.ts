@@ -21,7 +21,13 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ tickets: tickets || [] });
+    // Never expose is_human_error to client users
+    const clientSafeTickets = (tickets || []).map((t: any) => {
+      const { is_human_error: _excluded, ...rest } = t;
+      return rest;
+    });
+
+    return NextResponse.json({ tickets: clientSafeTickets });
   } catch {
     return NextResponse.json({ error: "Failed to fetch tickets" }, { status: 500 });
   }

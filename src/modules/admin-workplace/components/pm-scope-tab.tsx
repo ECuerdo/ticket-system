@@ -1,15 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { UserCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  UserCheck,
+  ChevronLeft,
+  ChevronRight,
+  Sliders,
+  X,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 interface SystemTypeItem {
   id: string;
   name: string;
+  description?: string;
 }
 
 interface UserProfileItem {
@@ -22,6 +41,11 @@ interface UserProfileItem {
     id: string;
     name: string;
   } | null;
+  assigned_systems?: {
+    id: string;
+    name: string;
+  }[];
+  assigned_system_ids?: string[];
 }
 
 export function PmScopeTab() {
@@ -34,6 +58,12 @@ export function PmScopeTab() {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
+
+  // Manage Scope Modal states
+  const [managingPm, setManagingPm] = useState<UserProfileItem | null>(null);
+  const [selectedScopeIds, setSelectedScopeIds] = useState<string[]>([]);
+  const [savingScopes, setSavingScopes] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -52,24 +82,118 @@ export function PmScopeTab() {
     loadData();
   }, []);
 
-  const handleUpdateAssignedCategory = async (userId: string, systemTypeId: string) => {
-    setUpdatingId(userId);
+  const handleOpenManageScopes = (pm: UserProfileItem) => {
+    setManagingPm(pm);
+    const existingIds =
+      pm.assigned_system_ids ||
+      (pm.assigned_systems || []).map((s) => s.id) ||
+      (pm.assigned_system_type_id ? [pm.assigned_system_type_id] : []);
+    setSelectedScopeIds(existingIds);
+    setScopeError(null);
+  };
+
+  const handleToggleScopeId = (sysId: string) => {
+    setSelectedScopeIds((prev) =>
+      prev.includes(sysId) ? prev.filter((id) => id !== sysId) : [...prev, sysId]
+    );
+  };
+
+  const handleSelectAllScopes = () => {
+    setSelectedScopeIds(systems.map((s) => s.id));
+  };
+
+  const handleClearAllScopes = () => {
+    setSelectedScopeIds([]);
+  };
+
+  const handleSaveScopes = async () => {
+    if (!managingPm) return;
+    setSavingScopes(true);
+    setScopeError(null);
     try {
       const res = await fetch("/api/admin-workplace", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId,
-          assignedSystemTypeId: systemTypeId === "ALL" ? null : systemTypeId,
+          userId: managingPm.id,
+          assignedSystemTypeIds: selectedScopeIds,
         }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to update assigned category");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to update PM scopes");
+      }
+      setManagingPm(null);
+      await loadData();
+    } catch (err: any) {
+      setScopeError(err.message || "Failed to update PM scopes");
+    } finally {
+      setSavingScopes(false);
+    }
+  };
+
+  const handleRemoveSingleScope = async (pm: UserProfileItem, systemIdToRemove: string) => {
+    setUpdatingId(pm.id);
+    const currentIds =
+      pm.assigned_system_ids ||
+      (pm.assigned_systems || []).map((s) => s.id) ||
+      (pm.assigned_system_type_id ? [pm.assigned_system_type_id] : []);
+
+    const updatedIds = currentIds.filter((id) => id !== systemIdToRemove);
+
+    try {
+      const res = await fetch("/api/admin-workplace", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: pm.id,
+          assignedSystemTypeIds: updatedIds,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to remove category scope");
       }
       await loadData();
     } catch (err: any) {
-      alert(err.message || "Error updating assigned category");
+      alert(err.message || "Failed to remove category scope");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleQuickAddScope = async (pm: UserProfileItem, systemIdToAdd: string) => {
+    if (!systemIdToAdd) return;
+    setUpdatingId(pm.id);
+
+    const currentIds =
+      pm.assigned_system_ids ||
+      (pm.assigned_systems || []).map((s) => s.id) ||
+      (pm.assigned_system_type_id ? [pm.assigned_system_type_id] : []);
+
+    if (currentIds.includes(systemIdToAdd)) {
+      setUpdatingId(null);
+      return;
+    }
+
+    const updatedIds = [...currentIds, systemIdToAdd];
+
+    try {
+      const res = await fetch("/api/admin-workplace", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: pm.id,
+          assignedSystemTypeIds: updatedIds,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to add category scope");
+      }
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || "Failed to add category scope");
     } finally {
       setUpdatingId(null);
     }
@@ -94,7 +218,7 @@ export function PmScopeTab() {
       <div>
         <h2 className="text-xl font-bold tracking-tight">PM Scope & Category Assignment</h2>
         <p className="text-sm text-muted-foreground">
-          Assign Project Managers to specific system categories so they only view and triage tickets within their assigned scope.
+          Assign Project Managers to one or multiple system categories (1-to-many) so they only view and triage tickets within their assigned scope.
         </p>
       </div>
 
@@ -119,7 +243,7 @@ export function PmScopeTab() {
             Project Managers Scope List ({filteredPMs.length})
           </CardTitle>
           <CardDescription className="text-xs">
-            Binding a system to a PM restricts their PM Workplace backlog strictly to tickets belonging to that category
+            Binding system categories to a PM restricts their PM Workplace backlog strictly to tickets belonging to those categories
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -133,50 +257,106 @@ export function PmScopeTab() {
             </div>
           ) : (
             <div className="divide-y divide-border/60">
-              {paginatedPMs.map((u) => (
-                <div
-                  key={u.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/20 transition-colors"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground truncate">
-                        {u.full_name}
-                      </span>
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10">
-                        Project Manager
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+              {paginatedPMs.map((u) => {
+                const assignedList =
+                  u.assigned_systems && u.assigned_systems.length > 0
+                    ? u.assigned_systems
+                    : u.assigned_system
+                    ? [u.assigned_system]
+                    : [];
 
-                    <div className="pt-1 flex items-center gap-1.5 text-xs text-primary font-medium">
-                      <span>Currently Assigned:</span>
-                      <span className="font-semibold underline">
-                        {u.assigned_system?.name || "All Systems (Full Backlog)"}
-                      </span>
+                const assignedIds = new Set(assignedList.map((s) => s.id));
+                const availableToAdd = systems.filter((s) => !assignedIds.has(s.id));
+
+                return (
+                  <div
+                    key={u.id}
+                    className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/20 transition-colors"
+                  >
+                    {/* PM Info & Assigned Badges */}
+                    <div className="min-w-0 space-y-2 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground truncate">
+                          {u.full_name}
+                        </span>
+                        <Badge variant="outline" className="text-[10px] uppercase font-mono border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10">
+                          Project Manager
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+
+                      {/* Multiple Assigned Categories Badges */}
+                      <div className="pt-0.5 space-y-1.5">
+                        <span className="text-xs text-muted-foreground font-medium block">
+                          Assigned Scope ({assignedList.length}):
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {assignedList.length > 0 ? (
+                            assignedList.map((sys) => (
+                              <Badge
+                                key={sys.id}
+                                variant="secondary"
+                                className="text-xs font-semibold bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/30 gap-1.5 py-1 px-2.5 rounded-lg"
+                              >
+                                <span>{sys.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSingleScope(u, sys.id)}
+                                  disabled={updatingId === u.id}
+                                  className="text-purple-400 hover:text-destructive transition-colors ml-0.5 rounded-full p-0.5"
+                                  title={`Remove ${sys.name}`}
+                                >
+                                  <X className="size-3" />
+                                </button>
+                              </Badge>
+                            ))
+                          ) : (
+                            <Badge variant="outline" className="text-xs border-dashed text-muted-foreground py-1 px-2.5">
+                              All Systems (Full Backlog)
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Add & Manage Button */}
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 self-start md:self-center shrink-0">
+                      {availableToAdd.length > 0 && (
+                        <select
+                          className="h-8 rounded-lg border border-border/80 bg-background px-2.5 py-1 text-xs outline-none focus-visible:border-ring max-w-[190px]"
+                          disabled={updatingId === u.id}
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleQuickAddScope(u, e.target.value);
+                              e.target.value = "";
+                            }
+                          }}
+                        >
+                          <option value="">+ Add System Scope...</option>
+                          {availableToAdd.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 border-purple-500/30 hover:bg-purple-500/10 text-xs font-semibold text-purple-700 dark:text-purple-300"
+                        disabled={updatingId === u.id}
+                        onClick={() => handleOpenManageScopes(u)}
+                      >
+                        <Sliders className="size-3.5" />
+                        Manage Scope
+                      </Button>
                     </div>
                   </div>
-
-                  <div className="flex flex-col gap-1 sm:self-center">
-                    <span className="text-[10px] text-muted-foreground font-medium">
-                      Assigned System Category
-                    </span>
-                    <select
-                      className="h-8 min-w-[220px] rounded-lg border border-purple-500/40 bg-purple-500/5 px-2.5 py-1 text-xs outline-none focus-visible:border-ring"
-                      value={u.assigned_system_type_id || "ALL"}
-                      disabled={updatingId === u.id}
-                      onChange={(e) => handleUpdateAssignedCategory(u.id, e.target.value)}
-                    >
-                      <option value="ALL">All Systems (Full Backlog)</option>
-                      {systems.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} Only
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -200,15 +380,11 @@ export function PmScopeTab() {
                 <option value={50}>50</option>
               </select>
               <span>
-                Showing {filteredPMs.length === 0 ? 0 : startIndex + 1}-
-                {Math.min(startIndex + rowsPerPage, filteredPMs.length)} of {filteredPMs.length}
+                {startIndex + 1}-{Math.min(startIndex + rowsPerPage, filteredPMs.length)} of {filteredPMs.length}
               </span>
             </div>
 
-            <div className="flex items-center gap-1.5">
-              <span className="mr-2">
-                Page {validCurrentPage} of {totalPages}
-              </span>
+            <div className="flex items-center gap-1">
               <Button
                 variant="outline"
                 size="icon"
@@ -217,38 +393,10 @@ export function PmScopeTab() {
                 disabled={validCurrentPage <= 1}
               >
                 <ChevronLeft className="size-4" />
-                <span className="sr-only">Previous page</span>
               </Button>
-
-              {/* Page numbers */}
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
-                if (
-                  page === 1 ||
-                  page === totalPages ||
-                  (page >= validCurrentPage - 1 && page <= validCurrentPage + 1)
-                ) {
-                  return (
-                    <Button
-                      key={page}
-                      variant={page === validCurrentPage ? "default" : "outline"}
-                      size="icon"
-                      className="size-8 text-xs"
-                      onClick={() => setCurrentPage(page)}
-                    >
-                      {page}
-                    </Button>
-                  );
-                }
-                if (page === validCurrentPage - 2 || page === validCurrentPage + 2) {
-                  return (
-                    <span key={page} className="px-1 text-muted-foreground">
-                      ...
-                    </span>
-                  );
-                }
-                return null;
-              })}
-
+              <span className="px-2 text-xs">
+                {validCurrentPage} / {totalPages}
+              </span>
               <Button
                 variant="outline"
                 size="icon"
@@ -257,13 +405,140 @@ export function PmScopeTab() {
                 disabled={validCurrentPage >= totalPages}
               >
                 <ChevronRight className="size-4" />
-                <span className="sr-only">Next page</span>
               </Button>
             </div>
           </div>
         )}
       </Card>
+
+      {/* Manage Multi-Category Scope Dialog */}
+      <Dialog
+        open={!!managingPm}
+        onOpenChange={(open) => {
+          if (!open) setManagingPm(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Sliders className="size-4 text-purple-600" />
+              Manage Scope & Categories
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Assign multiple system categories for <strong className="text-foreground">{managingPm?.full_name}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {scopeError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive flex items-center gap-2">
+              <AlertCircle className="size-4 shrink-0" />
+              <span>{scopeError}</span>
+            </div>
+          )}
+
+          <div className="space-y-3 py-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground pb-1">
+              <span>Selected Categories: <strong className="text-foreground">{selectedScopeIds.length} of {systems.length}</strong></span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllScopes}
+                  className="text-primary hover:underline font-medium"
+                >
+                  Select All
+                </button>
+                <span>&bull;</span>
+                <button
+                  type="button"
+                  onClick={handleClearAllScopes}
+                  className="text-muted-foreground hover:text-foreground font-medium"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            {/* Checkbox List for all Systems */}
+            <div className="max-h-[300px] overflow-y-auto divide-y divide-border/50 border border-border/70 rounded-xl">
+              {systems.length === 0 ? (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  No system types defined yet.
+                </div>
+              ) : (
+                systems.map((sys) => {
+                  const isChecked = selectedScopeIds.includes(sys.id);
+                  return (
+                    <div
+                      key={sys.id}
+                      onClick={() => handleToggleScopeId(sys.id)}
+                      className={`p-3 flex items-center justify-between cursor-pointer transition-colors ${
+                        isChecked ? "bg-purple-500/10 dark:bg-purple-500/15" : "hover:bg-muted/30"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Checkbox
+                          id={`scope-${sys.id}`}
+                          checked={isChecked}
+                          onCheckedChange={() => handleToggleScopeId(sys.id)}
+                        />
+                        <div className="min-w-0">
+                          <Label
+                            htmlFor={`scope-${sys.id}`}
+                            className="text-xs font-semibold cursor-pointer block truncate"
+                          >
+                            {sys.name}
+                          </Label>
+                          {sys.description && (
+                            <p className="text-[11px] text-muted-foreground line-clamp-1 truncate">
+                              {sys.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] shrink-0 ${
+                          isChecked
+                            ? "border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {isChecked ? "Assigned" : "Unassigned"}
+                      </Badge>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              If no specific categories are assigned, this Project Manager will have full access to view and triage all incoming tickets across all systems.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setManagingPm(null)}
+              disabled={savingScopes}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              onClick={handleSaveScopes}
+              disabled={savingScopes}
+            >
+              {savingScopes && <Loader2 className="size-3.5 mr-1.5 animate-spin" />}
+              Save Scopes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-

@@ -31,6 +31,7 @@ export interface NotificationItem {
   message: string;
   ticket_id?: string | null;
   ticket_number?: string | null;
+  ticket_status?: string | null;
   actor_id?: string | null;
   actor_name?: string | null;
   action_url?: string | null;
@@ -50,6 +51,63 @@ function getRelativeTime(dateString: string) {
     return formatDistanceToNow(date, { addSuffix: true });
   } catch {
     return "";
+  }
+}
+
+function getCleanTitle(item: NotificationItem) {
+  if (!item.title) return "Ticket";
+  if (!item.ticket_number) return item.title;
+  const regex = new RegExp(`^${item.ticket_number}\\s*[-–:]?\\s*`, "i");
+  const cleaned = item.title.replace(regex, "").trim();
+  return cleaned || item.title;
+}
+
+function getStatusBadge(status?: string | null) {
+  if (!status) return null;
+  const s = status.toUpperCase();
+  switch (s) {
+    case "OPEN":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 shrink-0">
+          Open
+        </span>
+      );
+    case "CONFIRMED_BUG":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 shrink-0">
+          Confirmed
+        </span>
+      );
+    case "IN_DEVELOPMENT":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
+          In Dev
+        </span>
+      );
+    case "UNDER_REVIEW":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shrink-0">
+          Review
+        </span>
+      );
+    case "RESOLVED":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0">
+          Resolved
+        </span>
+      );
+    case "REJECTED":
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-destructive/10 text-destructive border border-destructive/20 shrink-0">
+          Rejected
+        </span>
+      );
+    default:
+      return (
+        <span className="inline-flex items-center text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-muted text-muted-foreground border border-border shrink-0">
+          {status}
+        </span>
+      );
   }
 }
 
@@ -252,8 +310,9 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
                             {item.ticket_number}
                           </span>
                         )}
+                        {getStatusBadge(item.ticket_status)}
                         <span className="text-xs font-semibold text-foreground truncate">
-                          {item.title}
+                          {getCleanTitle(item)}
                         </span>
                       </div>
                       {item.stack_count > 1 && (

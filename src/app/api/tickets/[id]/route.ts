@@ -53,6 +53,11 @@ export async function GET(
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
 
+    // Hide is_human_error tag from CLIENT role (visible only to DEV, PM, ADMIN)
+    if (!isStaff && ticket) {
+      delete (ticket as any).is_human_error;
+    }
+
     // 2. Fetch total count of comments for this ticket (staff sees internal, client only sees public)
     let countQuery = supabase
       .from("ticket_comments")
@@ -216,14 +221,15 @@ export async function POST(
         await sendNotification({
           userId: recipientId,
           type: "TICKET_RESPONSE",
-          title: `${ticket?.ticket_number || "TCK"} - ${ticket?.title || "Ticket"}`,
+          title: ticket?.title || "Ticket",
           message: `${senderName}: ${preview}`,
           ticketId: id,
           ticketNumber: ticket?.ticket_number,
+          ticketStatus: ticket?.status,
           actorId: user.id,
           actorName: senderName,
           actionUrl: `/tickets/${id}`,
-          groupKey: `ticket-response-${id}`,
+          groupKey: `ticket-${id}`,
         });
       }
 
@@ -231,14 +237,15 @@ export async function POST(
       await notifyAdmins(
         {
           type: "TICKET_RESPONSE",
-          title: `${ticket?.ticket_number || "TCK"} - ${ticket?.title || "Ticket"}`,
+          title: ticket?.title || "Ticket",
           message: `${senderName}: ${preview}`,
           ticketId: id,
           ticketNumber: ticket?.ticket_number,
+          ticketStatus: ticket?.status,
           actorId: user.id,
           actorName: senderName,
           actionUrl: `/tickets/${id}`,
-          groupKey: `ticket-response-${id}`,
+          groupKey: `ticket-${id}`,
         },
         user.id
       );
@@ -263,7 +270,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { status, assignedDevId, priority, pmNotes, devNotes, rejectionReason } = await request.json();
+    const { status, assignedDevId, priority, pmNotes, devNotes, rejectionReason, isHumanError, is_human_error } = await request.json();
 
     const response = NextResponse.json({ success: true });
 
@@ -299,6 +306,11 @@ export async function PATCH(
     if (pmNotes !== undefined) updatePayload.pm_notes = pmNotes;
     if (devNotes !== undefined) updatePayload.dev_notes = devNotes;
     if (rejectionReason !== undefined) updatePayload.rejection_reason = rejectionReason;
+    if (isHumanError !== undefined) {
+      updatePayload.is_human_error = Boolean(isHumanError);
+    } else if (is_human_error !== undefined) {
+      updatePayload.is_human_error = Boolean(is_human_error);
+    }
 
     const { data: updatedTicket, error: updateError } = await supabase
       .from("tickets")
@@ -337,14 +349,15 @@ export async function PATCH(
           await sendNotification({
             userId: recipientId,
             type: "TICKET_STATUS",
-            title: `${updatedTicket.ticket_number || "TCK"} - ${updatedTicket.title}`,
+            title: updatedTicket.title || "Ticket",
             message: `Status changed to ${status} by ${actorName}`,
             ticketId: updatedTicket.id,
             ticketNumber: updatedTicket.ticket_number,
+            ticketStatus: status,
             actorId: user.id,
             actorName,
             actionUrl: `/tickets/${updatedTicket.id}`,
-            groupKey: `ticket-status-${updatedTicket.id}`,
+            groupKey: `ticket-${updatedTicket.id}`,
           });
         }
 
@@ -352,14 +365,15 @@ export async function PATCH(
         await notifyAdmins(
           {
             type: "TICKET_STATUS",
-            title: `${updatedTicket.ticket_number || "TCK"} - ${updatedTicket.title}`,
+            title: updatedTicket.title || "Ticket",
             message: `Status changed to ${status} by ${actorName}`,
             ticketId: updatedTicket.id,
             ticketNumber: updatedTicket.ticket_number,
+            ticketStatus: status,
             actorId: user.id,
             actorName,
             actionUrl: `/tickets/${updatedTicket.id}`,
-            groupKey: `ticket-status-${updatedTicket.id}`,
+            groupKey: `ticket-${updatedTicket.id}`,
           },
           user.id
         );
@@ -370,14 +384,15 @@ export async function PATCH(
         await sendNotification({
           userId: assignedDevId,
           type: "TICKET_ASSIGNED",
-          title: `Assigned: ${updatedTicket.ticket_number || "TCK"}`,
+          title: updatedTicket.title || "Ticket",
           message: `You were assigned to "${updatedTicket.title}" by ${actorName}`,
           ticketId: updatedTicket.id,
           ticketNumber: updatedTicket.ticket_number,
+          ticketStatus: updatedTicket.status,
           actorId: user.id,
           actorName,
           actionUrl: `/tickets/${updatedTicket.id}`,
-          groupKey: `ticket-assigned-${updatedTicket.id}`,
+          groupKey: `ticket-${updatedTicket.id}`,
         });
       }
     } catch (notifErr) {

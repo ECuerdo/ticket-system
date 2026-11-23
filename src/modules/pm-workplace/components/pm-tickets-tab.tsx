@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface PMTicketItem {
   id: string;
@@ -32,6 +33,7 @@ interface PMTicketItem {
   pm_notes?: string;
   rejection_reason?: string;
   assigned_dev_id?: string;
+  is_human_error?: boolean;
   system_types?: { name: string };
   profiles?: { full_name: string };
   dev?: { full_name: string; email: string };
@@ -51,6 +53,7 @@ export function PmTicketsTab() {
   const [selectedDevId, setSelectedDevId] = useState("");
   const [pmNotes, setPmNotes] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [isHumanError, setIsHumanError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [filterStatus, setFilterStatus] = useState("ALL");
@@ -77,6 +80,28 @@ export function PmTicketsTab() {
     loadData();
   }, []);
 
+  const handleToggleHumanError = async (checked: boolean | "indeterminate") => {
+    if (!selectedTicket) return;
+    const nextVal = Boolean(checked);
+    setIsHumanError(nextVal);
+    setSelectedTicket((prev) => (prev ? { ...prev, is_human_error: nextVal } : null));
+    setTickets((prev) =>
+      prev.map((item) =>
+        item.id === selectedTicket.id ? { ...item, is_human_error: nextVal } : item
+      )
+    );
+
+    try {
+      await fetch(`/api/tickets/${selectedTicket.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isHumanError: nextVal }),
+      });
+    } catch (err) {
+      console.error("Failed to update human error tag:", err);
+    }
+  };
+
   const handleUpdateStatus = async (status: string, devId?: string) => {
     if (!selectedTicket) return;
     setSubmitting(true);
@@ -90,6 +115,7 @@ export function PmTicketsTab() {
           pmNotes,
           rejectionReason,
           assignedDevId: devId || selectedDevId || null,
+          isHumanError,
         }),
       });
 
@@ -101,6 +127,7 @@ export function PmTicketsTab() {
       setPmNotes("");
       setRejectionReason("");
       setSelectedDevId("");
+      setIsHumanError(false);
       await loadData();
     } catch (err: any) {
       alert(err.message || "Failed to update ticket status");
@@ -240,6 +267,7 @@ export function PmTicketsTab() {
                           setSelectedPriority(t.priority || "MEDIUM");
                           setPmNotes(t.pm_notes || "");
                           setSelectedDevId(t.assigned_dev_id || "");
+                          setIsHumanError(Boolean(t.is_human_error));
                         }}
                       >
                         <div className="flex items-center justify-between">
@@ -247,6 +275,11 @@ export function PmTicketsTab() {
                             {t.ticket_number}
                           </span>
                           <div className="flex items-center gap-1.5">
+                            {t.is_human_error && (
+                              <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                                Human Error
+                              </Badge>
+                            )}
                             {getPriorityBadge(t.priority)}
                             {getStatusBadge(t.status)}
                           </div>
@@ -329,6 +362,11 @@ export function PmTicketsTab() {
                     {selectedTicket.ticket_number}
                   </span>
                   <div className="flex items-center gap-1.5">
+                    {selectedTicket.is_human_error && (
+                      <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                        Human Error
+                      </Badge>
+                    )}
                     {getStatusBadge(selectedTicket.status)}
                     <Button variant="outline" size="xs" nativeButton={false} render={<Link href={`/tickets/${selectedTicket.id}`} />}>
                       <MessageSquare className="size-3 mr-1" />
@@ -398,6 +436,29 @@ export function PmTicketsTab() {
                   <p className="mt-1 text-xs bg-muted/40 p-2.5 rounded-lg whitespace-pre-wrap leading-relaxed break-words">
                     {selectedTicket.description}
                   </p>
+                </div>
+
+                {/* Human Error Tagging Checkbox */}
+                <div className="flex items-start gap-3 rounded-xl border border-border/70 bg-muted/30 p-3 transition-colors hover:bg-muted/40">
+                  <Checkbox
+                    id="pm-human-error"
+                    checked={isHumanError}
+                    onCheckedChange={handleToggleHumanError}
+                    className="mt-0.5"
+                  />
+                  <div className="flex flex-col gap-0.5">
+                    <Label htmlFor="pm-human-error" className="text-xs font-semibold cursor-pointer flex items-center gap-1.5">
+                      Human Error
+                      {isHumanError && (
+                        <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                          Tagged
+                        </Badge>
+                      )}
+                    </Label>
+                    <span className="text-[11px] text-muted-foreground">
+                      Check if this ticket was caused by human error or operational mistake. (Visible to Dev, PM, and Admin only)
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
