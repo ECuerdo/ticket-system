@@ -27,7 +27,14 @@ export async function POST(request: NextRequest) {
     // Continue even if signOut errors
   }
 
-  // Explicitly invalidate all Supabase auth cookies
+  // Explicitly invalidate all Supabase auth cookies and remember_me cookie
+  response.cookies.set({
+    name: "remember_me",
+    value: "",
+    maxAge: 0,
+    path: "/",
+  });
+
   const allCookies = request.cookies.getAll();
   for (const cookie of allCookies) {
     if (cookie.name.startsWith("sb-") || cookie.name.includes("auth-token")) {

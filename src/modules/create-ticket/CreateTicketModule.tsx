@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { createClient } from "@/lib/supabase/client";
 
 interface SystemChoiceOption {
@@ -51,7 +52,7 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
-  
+
   // Attachments state
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -171,19 +172,45 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    if (!title.trim()) {
+      setErrorMsg("Ticket Title is required.");
+      return;
+    }
+
+    if (!selectedSystemId) {
+      setErrorMsg("Please select a Target System.");
+      return;
+    }
+
+    if (!selectedChoiceId) {
+      setErrorMsg("Please select an Issue Category.");
+      return;
+    }
+
+    if (!description.trim()) {
+      setErrorMsg("Description & Reproduction Steps are required.");
+      return;
+    }
+
+    if (attachments.length === 0) {
+      setErrorMsg("Please attach at least one screenshot or PDF document.");
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const res = await fetch("/api/create-ticket", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title,
-          description,
+          title: title.trim(),
+          description: description.trim(),
           systemTypeId: selectedSystemId,
-          choiceId: selectedChoiceId || null,
+          choiceId: selectedChoiceId,
           attachments,
           linkUrl: linkUrl.trim() || null,
         }),
@@ -247,7 +274,9 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
             )}
 
             <div className="space-y-1.5">
-              <Label htmlFor="ticket-title" className="text-xs font-medium">Ticket Title / Subject</Label>
+              <Label htmlFor="ticket-title" className="text-xs font-medium">
+                Ticket Title / Subject <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="ticket-title"
                 placeholder="e.g. Checkout page returns 502 error upon clicking place order"
@@ -259,43 +288,46 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="system-type" className="text-xs font-medium">Target System</Label>
+                <Label htmlFor="system-type" className="text-xs font-medium">
+                  Target System <span className="text-destructive">*</span>
+                </Label>
                 {loadingSystems ? (
                   <div className="text-xs text-muted-foreground py-2">Loading systems...</div>
                 ) : (
-                  <select
+                  <SearchableSelect
                     id="system-type"
-                    className="flex h-8 w-full rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    options={systems.map((s) => ({
+                      value: s.id,
+                      label: s.name,
+                    }))}
                     value={selectedSystemId}
-                    onChange={(e) => {
-                      setSelectedSystemId(e.target.value);
+                    onChange={(val) => {
+                      setSelectedSystemId(val);
                       setSelectedChoiceId("");
                     }}
-                  >
-                    {systems.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="-- Select System --"
+                    searchPlaceholder="Search target system..."
+                  />
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="system-choice" className="text-xs font-medium">Issue Category</Label>
-                <select
+                <Label htmlFor="system-choice" className="text-xs font-medium">
+                  Issue Category <span className="text-destructive">*</span>
+                </Label>
+                <SearchableSelect
                   id="system-choice"
-                  className="flex h-8 w-full rounded-lg border border-input bg-background px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  options={availableChoices.map((c) => ({
+                    value: c.id,
+                    label: c.label,
+                  }))}
                   value={selectedChoiceId}
-                  onChange={(e) => setSelectedChoiceId(e.target.value)}
-                >
-                  <option value="">-- Select Category --</option>
-                  {availableChoices.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setSelectedChoiceId(val)}
+                  placeholder="-- Select Category --"
+                  searchPlaceholder="Search issue category..."
+                  disabled={!selectedSystemId || availableChoices.length === 0}
+                  emptyMessage={!selectedSystemId ? "Select a Target System first" : "No categories found for this system."}
+                />
               </div>
             </div>
 
@@ -328,7 +360,9 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="ticket-desc" className="text-xs font-medium">Description & Reproduction Steps</Label>
+              <Label htmlFor="ticket-desc" className="text-xs font-medium">
+                Description & Reproduction Steps <span className="text-destructive">*</span>
+              </Label>
               <Textarea
                 id="ticket-desc"
                 rows={5}
@@ -344,7 +378,8 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium flex items-center gap-1.5">
                   <Paperclip className="size-3.5 text-primary" />
-                  Attach Screenshots or PDF Documents (Max 10MB each)
+                  Attach Screenshots or PDF Documents <span className="text-destructive">*</span>
+                  <span className="text-[11px] font-normal text-muted-foreground">(Required, Max 10MB each)</span>
                 </Label>
                 <Button
                   type="button"
@@ -376,7 +411,16 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
                 onChange={handleFileUpload}
               />
 
-              {attachments.length > 0 && (
+              {attachments.length === 0 ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border border-dashed border-border/80 hover:border-primary/50 hover:bg-muted/30 rounded-xl p-4 text-center cursor-pointer transition-colors"
+                >
+                  <Paperclip className="size-5 mx-auto mb-1 text-muted-foreground" />
+                  <p className="text-xs font-medium text-foreground">Click here to attach required screenshots or PDF files</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">At least 1 attachment is required to submit a ticket</p>
+                </div>
+              ) : (
                 <div className="grid gap-2 sm:grid-cols-2 pt-1">
                   {attachments.map((file, idx) => (
                     <div
