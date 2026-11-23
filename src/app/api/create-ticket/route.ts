@@ -4,7 +4,7 @@ import { sendNotification, notifyAdmins } from "@/lib/notifications";
 
 export async function POST(request: NextRequest) {
   try {
-    const { title, description, systemTypeId, choiceId, priority, attachments } = await request.json();
+    const { title, description, systemTypeId, choiceId, priority, attachments, linkUrl } = await request.json();
 
     if (!title || !description || !systemTypeId) {
       return NextResponse.json(
@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
         status: "OPEN",
         client_id: user.id,
         attachments: attachments || [],
+        link_url: linkUrl?.trim() || null,
       })
       .select()
       .single();
@@ -70,14 +71,15 @@ export async function POST(request: NextRequest) {
       await notifyAdmins(
         {
           type: "TICKET_NEW",
-          title: `New Ticket: ${ticket.ticket_number || "TCK"}`,
+          title: ticket.title || "New Ticket",
           message: `${ticket.title} submitted by ${creatorName}`,
           ticketId: ticket.id,
           ticketNumber: ticket.ticket_number,
+          ticketStatus: "OPEN",
           actorId: user.id,
           actorName: creatorName,
           actionUrl: `/tickets/${ticket.id}`,
-          groupKey: `ticket-new-${ticket.id}`,
+          groupKey: `ticket-${ticket.id}`,
         },
         user.id
       );
@@ -96,14 +98,15 @@ export async function POST(request: NextRequest) {
           await sendNotification({
             userId: pm.id,
             type: "TICKET_NEW",
-            title: `New Ticket: ${ticket.ticket_number || "TCK"}`,
+            title: ticket.title || "New Ticket",
             message: `${ticket.title} submitted by ${creatorName}`,
             ticketId: ticket.id,
             ticketNumber: ticket.ticket_number,
+            ticketStatus: "OPEN",
             actorId: user.id,
             actorName: creatorName,
             actionUrl: `/tickets/${ticket.id}`,
-            groupKey: `ticket-new-${ticket.id}`,
+            groupKey: `ticket-${ticket.id}`,
           });
         }
       }

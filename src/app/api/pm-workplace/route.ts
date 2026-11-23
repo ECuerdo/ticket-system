@@ -19,6 +19,17 @@ export async function GET() {
       .eq("id", user.id)
       .single();
 
+    // Fetch this PM's multiple assigned system scopes
+    const { data: pmScopes } = await supabase
+      .from("pm_system_scopes")
+      .select("system_type_id")
+      .eq("pm_id", user.id);
+
+    const assignedSystemIds = (pmScopes || []).map((s) => s.system_type_id);
+    if (assignedSystemIds.length === 0 && profile?.assigned_system_type_id) {
+      assignedSystemIds.push(profile.assigned_system_type_id);
+    }
+
     let query = supabase
       .from("tickets")
       .select(
@@ -26,9 +37,9 @@ export async function GET() {
       )
       .order("created_at", { ascending: false });
 
-    // If user is PM and has an assigned system/category, filter tickets strictly to that category
-    if (profile?.role === "PM" && profile?.assigned_system_type_id) {
-      query = query.eq("system_type_id", profile.assigned_system_type_id);
+    // If user is PM and has assigned system scopes, filter tickets strictly to those categories
+    if (profile?.role === "PM" && assignedSystemIds.length > 0) {
+      query = query.in("system_type_id", assignedSystemIds);
     }
 
     const { data: tickets, error } = await query;
@@ -59,7 +70,8 @@ export async function GET() {
       allDevelopers: allDevs || [],
       // For backwards compatibility or fallback if PM hasn't assigned specific devs yet:
       devs: myDevelopers.length > 0 ? myDevelopers : (allDevs || []),
-      assignedSystemId: profile?.assigned_system_type_id || null,
+      assignedSystemId: assignedSystemIds[0] || profile?.assigned_system_type_id || null,
+      assignedSystemIds: assignedSystemIds,
     });
   } catch {
     return NextResponse.json({ error: "Failed to fetch PM tickets" }, { status: 500 });

@@ -27,6 +27,7 @@ interface DevTicketItem {
   description: string;
   priority: string;
   status: string;
+  is_human_error?: boolean;
   pm_notes?: string;
   dev_notes?: string;
   system_types?: { name: string };
@@ -215,6 +216,11 @@ export function DevTicketsTab() {
                             {t.ticket_number}
                           </span>
                           <div className="flex items-center gap-1.5">
+                            {t.is_human_error && (
+                              <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                                Human Error
+                              </Badge>
+                            )}
                             {getPriorityBadge(t.priority)}
                             {getStatusBadge(t.status)}
                           </div>
@@ -303,6 +309,11 @@ export function DevTicketsTab() {
                     {selectedTicket.ticket_number}
                   </span>
                   <div className="flex items-center gap-1.5">
+                    {selectedTicket.is_human_error && (
+                      <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                        Human Error
+                      </Badge>
+                    )}
                     {getStatusBadge(selectedTicket.status)}
                     <Button variant="outline" size="xs" nativeButton={false} render={<Link href={`/tickets/${selectedTicket.id}`} />}>
                       <MessageSquare className="size-3 mr-1" />

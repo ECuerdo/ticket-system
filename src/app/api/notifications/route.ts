@@ -25,21 +25,67 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data: notifications, error } = await supabase
+    const { data: rawNotifications, error } = await supabase
       .from("notifications")
-      .select("*")
+      .select("*, ticket:tickets(status)")
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .limit(100);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    const unreadCount = (notifications || []).filter((n) => !n.is_read).length;
+    // Deduplicate in-memory to strictly guarantee 1 row per ticket or group
+    interface NotificationRow {
+      id: string;
+      user_id: string;
+      type: string;
+      title: string;
+      message: string;
+      ticket_id?: string | null;
+      ticket_number?: string | null;
+      ticket_status?: string | null;
+      actor_id?: string | null;
+      actor_name?: string | null;
+      action_url?: string | null;
+      is_read: boolean;
+      group_key?: string | null;
+      stack_count: number;
+      created_at: string;
+      updated_at: string;
+    }
+
+    const deduped: NotificationRow[] = [];
+    const seen = new Map<string, NotificationRow>();
+
+    for (const item of (rawNotifications || [])) {
+      const groupKey = item.ticket_id
+        ? `ticket-${item.ticket_id}`
+        : (item.group_key || item.id);
+
+      const status = item.ticket_status || (item.ticket as any)?.status || null;
+
+      const existing = seen.get(groupKey);
+      if (existing) {
+        existing.stack_count = (existing.stack_count || 1) + (item.stack_count || 1);
+        if (!item.is_read) {
+          existing.is_read = false;
+        }
+        if (status) {
+          existing.ticket_status = status;
+        }
+      } else {
+        const copy: NotificationRow = { ...item, ticket_status: status };
+        seen.set(groupKey, copy);
+        deduped.push(copy);
+      }
+    }
+
+    const unreadCount = deduped.filter((n) => !n.is_read).length;
 
     return NextResponse.json({
-      notifications: notifications || [],
+      notifications: deduped,
       unreadCount,
     });
   } catch (err: unknown) {
@@ -91,14 +137,31 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (body.notificationId) {
-      const { error } = await supabase
+      const { data: target } = await supabase
         .from("notifications")
-        .update({ is_read: true })
+        .select("group_key, ticket_id")
         .eq("id", body.notificationId)
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+      if (target?.group_key) {
+        await supabase
+          .from("notifications")
+          .update({ is_read: true })
+          .eq("user_id", user.id)
+          .eq("group_key", target.group_key);
+      } else if (target?.ticket_id) {
+        await supabase
+          .from("notifications")
+          .update({ is_read: true })
+          .eq("user_id", user.id)
+          .eq("ticket_id", target.ticket_id);
+      } else {
+        await supabase
+          .from("notifications")
+          .update({ is_read: true })
+          .eq("id", body.notificationId)
+          .eq("user_id", user.id);
       }
 
       return NextResponse.json({ success: true, message: "Marked as read" });

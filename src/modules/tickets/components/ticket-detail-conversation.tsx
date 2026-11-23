@@ -8,6 +8,7 @@ import {
   Loader2,
   Paperclip,
   ExternalLink,
+  Link2,
   MessageSquare,
   FileText,
   Maximize2,
@@ -726,6 +727,11 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
             )}
             {getPriorityBadge(ticket.priority)}
             {getStatusBadge(ticket.status)}
+            {isStaff && ticket.is_human_error && (
+              <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10 text-[10px]">
+                Human Error
+              </Badge>
+            )}
           </div>
         </div>
 
@@ -751,6 +757,39 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
               <div className="text-xs leading-relaxed whitespace-pre-wrap bg-muted/30 p-3 rounded-lg border border-border/50 break-words">
                 {ticket.description}
               </div>
+
+              {(ticket.link_url || ticket.linkUrl) && (
+                <div className="space-y-1.5 pt-0.5">
+                  <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <Link2 className="size-3.5 text-primary" />
+                    Reference Link
+                  </span>
+                  <a
+                    href={
+                      (ticket.link_url || ticket.linkUrl).startsWith("http://") ||
+                      (ticket.link_url || ticket.linkUrl).startsWith("https://")
+                        ? (ticket.link_url || ticket.linkUrl)
+                        : `https://${ticket.link_url || ticket.linkUrl}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary text-xs transition-colors group/link"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ExternalLink className="size-3.5 shrink-0 text-primary" />
+                      <span className="truncate font-mono font-medium">
+                        {ticket.link_url || ticket.linkUrl}
+                      </span>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] h-5 px-1.5 border-primary/30 text-primary shrink-0 group-hover/link:bg-primary group-hover/link:text-primary-foreground transition-colors"
+                    >
+                      Open Link
+                    </Badge>
+                  </a>
+                </div>
+              )}
 
               {ticket.attachments && ticket.attachments.length > 0 && (
                 <div className="space-y-2 pt-1">

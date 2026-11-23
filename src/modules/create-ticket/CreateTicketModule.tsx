@@ -11,6 +11,8 @@ import {
   FileText,
   Image as ImageIcon,
   CheckCircle2,
+  Link2,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +50,7 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
   const [selectedChoiceId, setSelectedChoiceId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   
   // Attachments state
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
@@ -155,6 +158,7 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
   const resetForm = () => {
     setTitle("");
     setDescription("");
+    setLinkUrl("");
     setSelectedChoiceId("");
     setAttachments([]);
     if (systems.length > 0) {
@@ -181,6 +185,7 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
           systemTypeId: selectedSystemId,
           choiceId: selectedChoiceId || null,
           attachments,
+          linkUrl: linkUrl.trim() || null,
         }),
       });
 
@@ -292,6 +297,34 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
                   ))}
                 </select>
               </div>
+            </div>
+
+            {/* Reference Link / Issue URL (Optional) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="ticket-link" className="text-xs font-medium flex items-center gap-1.5">
+                  <Link2 className="size-3.5 text-primary" />
+                  Reference Link / Related URL
+                  <span className="text-[11px] font-normal text-muted-foreground">(Optional)</span>
+                </Label>
+              </div>
+              <div className="relative">
+                <Input
+                  id="ticket-link"
+                  type="url"
+                  placeholder="e.g. https://crm.internal.corp/orders/10294 or Loom / staging URL"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  className="text-xs pl-8 font-mono placeholder:font-sans"
+                />
+                <Link2 className="size-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 bg-muted/40 px-2.5 py-1.5 rounded-md border border-border/50">
+                <Sparkles className="size-3 text-amber-500 shrink-0" />
+                <span>
+                  <strong>Tip:</strong> Adding a direct link to the affected page, Loom recording, or test environment helps our engineers reproduce and resolve your issue significantly faster.
+                </span>
+              </p>
             </div>
 
             <div className="space-y-1.5">

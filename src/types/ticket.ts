@@ -51,6 +51,10 @@ export interface Ticket {
   assignedDevId?: string;
   devNotes?: string;
   rejectionReason?: string;
+  linkUrl?: string | null;
+  link_url?: string | null;
+  isHumanError?: boolean;
+  is_human_error?: boolean;
   createdAt: string;
   updatedAt: string;
 }

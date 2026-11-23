@@ -17,6 +17,8 @@ import {
   UserCheck,
   Settings,
   ShieldAlert,
+  Trophy,
+  Flame,
 } from "lucide-react";
 import { useBranding } from "@/components/shared/branding-provider";
 import {
@@ -109,6 +111,13 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
   const isPmRoute = pathname.startsWith("/pm-workplace");
   const isDevRoute = pathname.startsWith("/dev-workplace");
 
+  const userRole = user.role || "CLIENT";
+  const branding = useBranding();
+  const isAdmin = userRole === "ADMIN";
+  const isPM = userRole === "PM" || isAdmin;
+  const isDev = userRole === "DEV" || isAdmin;
+  const isStaff = isAdmin || userRole === "PM" || userRole === "DEV";
+
   const navigationModules = [
     {
       title: "Dashboard",
@@ -125,18 +134,27 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
       href: "/tickets",
       icon: Ticket,
     },
+    ...(isStaff
+      ? [
+          {
+            title: "Hall of Fame",
+            href: "/hall-of-fame",
+            icon: Trophy,
+          },
+          {
+            title: "Hall of Shame",
+            href: "/hall-of-shame",
+            icon: Flame,
+          },
+        ]
+      : []),
   ];
 
   const filteredItems = navigationModules.filter((item) =>
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const userRole = user.role || "CLIENT";
-  const branding = useBranding();
   const showSettings = userRole === "ADMIN" && "settings".includes(searchQuery.toLowerCase());
-  const isAdmin = userRole === "ADMIN";
-  const isPM = userRole === "PM" || isAdmin;
-  const isDev = userRole === "DEV" || isAdmin;
 
   const showPm =
     isPM &&
