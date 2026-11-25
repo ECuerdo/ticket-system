@@ -11,6 +11,7 @@ interface ChatEmojiPickerProps {
   onSelectEmoji: (emoji: string) => void;
   disabled?: boolean;
   className?: string;
+  variant?: "outline" | "ghost";
 }
 
 interface EmojiItem {
@@ -242,7 +243,12 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
   },
 ];
 
-export function ChatEmojiPicker({ onSelectEmoji, disabled, className }: ChatEmojiPickerProps) {
+export function ChatEmojiPicker({
+  onSelectEmoji,
+  disabled,
+  className,
+  variant = "ghost",
+}: ChatEmojiPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("quick");
@@ -277,10 +283,10 @@ export function ChatEmojiPicker({ onSelectEmoji, disabled, className }: ChatEmoj
         render={
           <Button
             type="button"
-            variant="outline"
+            variant={variant}
             size="icon"
             className={cn(
-              "size-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors",
+              "size-8 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors",
               className
             )}
             disabled={disabled}

@@ -39,8 +39,9 @@ import {
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { type HeaderUser } from "@/components/shared/app-sidebar/nav-user";
+import { createClient } from "@/lib/supabase/client";
 
 const adminSubItems = [
   {
@@ -233,6 +234,31 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
     staff_chat_enabled: true,
   });
 
+  const [unreadCounts, setUnreadCounts] = useState<{
+    pm: number;
+    dev: number;
+    staff: number;
+  }>({
+    pm: 0,
+    dev: 0,
+    staff: 0,
+  });
+
+  const loadUnreadCounts = useCallback(async () => {
+    if (!isStaff) return;
+    try {
+      const res = await fetch("/api/group-chats/unread");
+      if (res.ok) {
+        const json = await res.json();
+        if (json.unread) {
+          setUnreadCounts(json.unread);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [isStaff]);
+
   useEffect(() => {
     async function loadChatSettings() {
       try {
@@ -256,6 +282,127 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
     }
   }, [isStaff]);
 
+  // Mark read when navigating directly to a chat
+  useEffect(() => {
+    if (!isStaff) return;
+
+    if (pathname === "/pm-chat") {
+      setUnreadCounts((prev) => ({ ...prev, pm: 0 }));
+      fetch("/api/group-chats/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatType: "pm" }),
+      }).catch(() => {});
+    } else if (pathname === "/dev-chat") {
+      setUnreadCounts((prev) => ({ ...prev, dev: 0 }));
+      fetch("/api/group-chats/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatType: "dev" }),
+      }).catch(() => {});
+    } else if (pathname === "/staff-chat") {
+      setUnreadCounts((prev) => ({ ...prev, staff: 0 }));
+      fetch("/api/group-chats/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatType: "staff" }),
+      }).catch(() => {});
+    }
+  }, [pathname, isStaff]);
+
+  // Realtime subscription for unread messages
+  useEffect(() => {
+    if (!isStaff) return;
+
+    loadUnreadCounts();
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel("sidebar-group-chats-unread")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "pm_chat_messages" },
+        (payload) => {
+          if (payload.new?.user_id !== user.id) {
+            if (pathname === "/pm-chat") {
+              fetch("/api/group-chats/read", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatType: "pm" }),
+              }).catch(() => {});
+            } else {
+              setUnreadCounts((prev) => ({ ...prev, pm: prev.pm + 1 }));
+            }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "dev_chat_messages" },
+        (payload) => {
+          if (payload.new?.user_id !== user.id) {
+            if (pathname === "/dev-chat") {
+              fetch("/api/group-chats/read", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatType: "dev" }),
+              }).catch(() => {});
+            } else {
+              setUnreadCounts((prev) => ({ ...prev, dev: prev.dev + 1 }));
+            }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "staff_chat_messages" },
+        (payload) => {
+          if (payload.new?.user_id !== user.id) {
+            if (pathname === "/staff-chat") {
+              fetch("/api/group-chats/read", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatType: "staff" }),
+              }).catch(() => {});
+            } else {
+              setUnreadCounts((prev) => ({ ...prev, staff: prev.staff + 1 }));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    const handleReadEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ chatType: "pm" | "dev" | "staff" }>;
+      if (customEvent.detail?.chatType) {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [customEvent.detail.chatType]: 0,
+        }));
+      }
+    };
+
+    window.addEventListener("group-chat-read", handleReadEvent);
+
+    const handleFocus = () => {
+      loadUnreadCounts();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadUnreadCounts();
+      }
+    }, 25000);
+
+    return () => {
+      channel.unsubscribe();
+      window.removeEventListener("group-chat-read", handleReadEvent);
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(interval);
+    };
+  }, [isStaff, pathname, user.id, loadUnreadCounts]);
+
   const teamChatItems = [
     ...(isPM && (isAdmin || chatSettings.pm_chat_enabled)
       ? [
@@ -264,6 +411,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
             href: "/pm-chat",
             icon: Layers,
             disabled: !chatSettings.pm_chat_enabled,
+            unreadCount: unreadCounts.pm,
           },
         ]
       : []),
@@ -274,6 +422,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
             href: "/dev-chat",
             icon: Code2,
             disabled: !chatSettings.dev_chat_enabled,
+            unreadCount: unreadCounts.dev,
           },
         ]
       : []),
@@ -284,6 +433,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
             href: "/staff-chat",
             icon: Users,
             disabled: !chatSettings.staff_chat_enabled,
+            unreadCount: unreadCounts.staff,
           },
         ]
       : []),
@@ -624,6 +774,11 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                         {item.disabled && (
                           <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-destructive/10 text-destructive border border-destructive/20">
                             Off
+                          </span>
+                        )}
+                        {(item.unreadCount ?? 0) > 0 && !isActive && (
+                          <span className="ml-auto flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-primary text-primary-foreground shadow-2xs">
+                            {item.unreadCount > 99 ? "99+" : item.unreadCount}
                           </span>
                         )}
                       </SidebarMenuButton>

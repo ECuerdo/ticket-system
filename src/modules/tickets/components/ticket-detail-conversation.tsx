@@ -17,6 +17,9 @@ import {
   Lock,
   Flag,
   ShieldAlert,
+  Reply,
+  Pencil,
+  X,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +83,23 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
   const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string; role: string }[]>([]);
   const typingTimeoutsRef = useRef<{ [userId: string]: NodeJS.Timeout }>({});
   const lastTypingSentRef = useRef<number>(0);
+  const isSendingRef = useRef(false);
+
+  // Reply and Edit states
+  const [replyingTo, setReplyingTo] = useState<any | null>(null);
+  const [editingComment, setEditingComment] = useState<any | null>(null);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
+
+  const jumpToComment = (commentId: string) => {
+    const el = document.getElementById(`comment-${commentId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedCommentId(commentId);
+      setTimeout(() => {
+        setHighlightedCommentId(null);
+      }, 2500);
+    }
+  };
 
   // Client Report Modal state
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
@@ -439,6 +459,13 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
           );
         }
       })
+      .on("broadcast", { event: "comment_edit" }, ({ payload }) => {
+        if (payload?.comment) {
+          setComments((prev) =>
+            prev.map((c) => (c.id === payload.comment.id ? { ...c, ...payload.comment } : c))
+          );
+        }
+      })
       .on(
         "postgres_changes",
         {
@@ -450,7 +477,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
         async (payload) => {
           const { data: newCommentData } = await supabase
             .from("ticket_comments")
-            .select("*, author:user_id(full_name, email, role), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
+            .select("*, author:user_id(full_name, email, role), reply_to:reply_to_id(id, content, is_internal, author:user_id(id, full_name, role)), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
             .eq("id", payload.new.id)
             .single();
 
@@ -474,6 +501,28 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                 });
               }
             }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "ticket_comments",
+          filter: `ticket_id=eq.${ticketId}`,
+        },
+        async (payload) => {
+          const { data: updatedCommentData } = await supabase
+            .from("ticket_comments")
+            .select("*, author:user_id(full_name, email, role), reply_to:reply_to_id(id, content, is_internal, author:user_id(id, full_name, role)), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
+            .eq("id", payload.new.id)
+            .single();
+
+          if (updatedCommentData) {
+            setComments((prev) =>
+              prev.map((c) => (c.id === updatedCommentData.id ? { ...c, ...updatedCommentData } : c))
+            );
           }
         }
       )
@@ -580,18 +629,131 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     }
   };
 
+  const handleStartEditComment = (c: any) => {
+    setReplyingTo(null);
+    setEditingComment(c);
+    setNewComment(c.content || "");
+  };
+
+  const handleCancelEditComment = () => {
+    setEditingComment(null);
+    setNewComment("");
+  };
+
   const handleSendComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() && chatAttachments.length === 0) return;
+    if ((!newComment.trim() && chatAttachments.length === 0) || isSendingRef.current) return;
 
+    // Handle Comment Editing
+    if (editingComment) {
+      const targetId = editingComment.id;
+      const commentContent = newComment.trim();
+      setEditingComment(null);
+      setNewComment("");
+
+      // Optimistic edit
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === targetId
+            ? { ...c, content: commentContent, is_edited: true, edited_at: new Date().toISOString() }
+            : c
+        )
+      );
+
+      try {
+        const res = await fetch(`/api/tickets/${ticketId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "edit_comment",
+            commentId: targetId,
+            content: commentContent,
+          }),
+        });
+
+        const json = await res.json().catch(() => null);
+        if (res.ok && json?.comment) {
+          setComments((prev) =>
+            prev.map((c) => (c.id === targetId ? json.comment : c))
+          );
+
+          try {
+            channelRef.current?.send({
+              type: "broadcast",
+              event: "comment_edit",
+              payload: { comment: json.comment },
+            });
+          } catch {
+            // ignore broadcast errors
+          }
+        }
+      } catch (err) {
+        console.error("Failed to edit comment", err);
+      }
+      return;
+    }
+
+    isSendingRef.current = true;
     setSending(true);
+
+    const commentContent = newComment.trim();
+    const currentAttachments = [...chatAttachments];
+    const currentReplyTo = replyingTo;
+
+    // Immediately clear input & attachments
+    setNewComment("");
+    setChatAttachments([]);
+    setReplyingTo(null);
+    sendTypingStatus(false);
+
+    // Create optimistic temporary comment
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticComment = {
+      id: tempId,
+      ticket_id: ticketId,
+      user_id: currentUserId,
+      content: commentContent,
+      attachments: currentAttachments,
+      reply_to_id: currentReplyTo?.id || null,
+      reply_to: currentReplyTo
+        ? {
+            id: currentReplyTo.id,
+            content: currentReplyTo.content,
+            author: currentReplyTo.author,
+          }
+        : undefined,
+      is_internal: isClosedForClient && isStaff,
+      created_at: new Date().toISOString(),
+      author: {
+        id: currentUserId,
+        full_name: currentUserName,
+        email: "",
+        role: currentUserRole,
+      },
+      reactions: [],
+    };
+
+    // Render immediately in conversation feed without waiting for server
+    setComments((prev) => [...prev, optimisticComment]);
+    setTotalCount((c) => (c !== null ? c + 1 : 1));
+
+    requestAnimationFrame(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    });
+
     try {
       const res = await fetch(`/api/tickets/${ticketId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          content: newComment.trim(),
-          attachments: chatAttachments,
+          content: commentContent,
+          attachments: currentAttachments,
+          reply_to_id: currentReplyTo?.id || null,
         }),
       });
 
@@ -600,26 +762,12 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
         throw new Error(errJson?.error || "Failed to post message");
       }
 
-      setNewComment("");
-      setChatAttachments([]);
-      sendTypingStatus(false);
-
       const json = await res.json().catch(() => null);
       if (json?.comment) {
-        setComments((prev) => {
-          if (prev.some((c) => c.id === json.comment.id)) return prev;
-          return [...prev, json.comment];
-        });
-        setTotalCount((c) => (c !== null ? c + 1 : 1));
-
-        requestAnimationFrame(() => {
-          if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollTo({
-              top: scrollContainerRef.current.scrollHeight,
-              behavior: "smooth",
-            });
-          }
-        });
+        // Replace optimistic comment with persisted record
+        setComments((prev) =>
+          prev.map((c) => (c.id === tempId ? json.comment : c))
+        );
 
         // Broadcast to other open browser tabs / clients in real-time
         try {
@@ -633,6 +781,13 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
         }
       }
     } catch (err: unknown) {
+      // Revert optimistic comment and restore input
+      setComments((prev) => prev.filter((c) => c.id !== tempId));
+      setTotalCount((c) => (c !== null ? Math.max(0, c - 1) : 0));
+      setNewComment(commentContent);
+      setChatAttachments(currentAttachments);
+      setReplyingTo(currentReplyTo);
+
       if (err instanceof Error) {
         alert(err.message);
       } else {
@@ -640,6 +795,9 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
       }
     } finally {
       setSending(false);
+      setTimeout(() => {
+        isSendingRef.current = false;
+      }, 300);
     }
   };
 
@@ -945,7 +1103,10 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                   return (
                     <div
                       key={c.id}
-                      className={`group relative flex gap-3 ${isMe ? "flex-row-reverse" : "flex-row"}`}
+                      id={`comment-${c.id}`}
+                      className={`group relative flex gap-3 transition-colors rounded-xl p-1 ${
+                        isMe ? "flex-row-reverse" : "flex-row"
+                      } ${highlightedCommentId === c.id ? "bg-primary/10 ring-2 ring-primary ring-offset-2 transition-all duration-300" : ""}`}
                     >
                       <Avatar className="size-8 shrink-0">
                         <AvatarFallback className="text-[10px] font-bold bg-muted">
@@ -966,6 +1127,11 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                               <Lock className="size-2.5" />
                               Staff Only
                             </Badge>
+                          )}
+                          {c.is_edited && (
+                            <span className="text-[10px] text-muted-foreground/80 dark:text-muted-foreground font-normal">
+                              &bull; Edited
+                            </span>
                           )}
                           <span>&bull;</span>
                           <span
@@ -988,62 +1154,82 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                                 : "bg-muted/60 text-foreground rounded-tl-xs border border-border/60"
                             }`}
                           >
-                          {c.content && <p className="whitespace-pre-wrap">{c.content}</p>}
+                            {/* Replied Reference Card */}
+                            {c.reply_to && (
+                              <div
+                                onClick={() => c.reply_to_id && jumpToComment(c.reply_to_id)}
+                                className={`mb-2 px-2.5 py-1.5 rounded-lg text-[11px] border-l-2 cursor-pointer transition-opacity hover:opacity-80 flex flex-col gap-0.5 select-none ${
+                                  isMe
+                                    ? "bg-primary-foreground/15 border-primary-foreground/70 text-primary-foreground/90"
+                                    : "bg-muted border-primary text-muted-foreground"
+                                }`}
+                              >
+                                <div className="flex items-center gap-1 font-semibold text-[10px]">
+                                  <Reply className="size-2.5 shrink-0" />
+                                  <span>{c.reply_to.author?.full_name || "User"}</span>
+                                </div>
+                                <p className="truncate line-clamp-1 italic text-[11px]">
+                                  {c.reply_to.content || "Attachment"}
+                                </p>
+                              </div>
+                            )}
 
-                          {/* Comment attachments */}
-                          {c.attachments && c.attachments.length > 0 && (
-                            <div
-                              className={`space-y-2 ${
-                                c.content
-                                  ? `mt-2 border-t pt-2 ${
-                                      isMe ? "border-primary-foreground/25" : "border-border/60"
-                                    }`
-                                  : ""
-                              }`}
-                            >
-                              {c.attachments.map((file: any) => {
-                                const isImg =
-                                  file.type?.startsWith("image/") ||
-                                  /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name || file.url);
+                            {c.content && <p className="whitespace-pre-wrap">{c.content}</p>}
 
-                                return isImg ? (
-                                  <a
-                                    key={file.url}
-                                    href={file.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="block overflow-hidden rounded-md border border-border/40 bg-background/20 max-w-[260px] hover:opacity-95 transition-opacity"
-                                  >
-                                    <img
-                                      src={file.url}
-                                      alt={file.name || "Attachment"}
-                                      className="w-full h-auto max-h-48 object-cover rounded-md"
-                                    />
-                                    <span className="block text-[10px] p-1 truncate font-mono">
-                                      {file.name}
-                                    </span>
-                                  </a>
-                                ) : (
-                                  <a
-                                    key={file.url}
-                                    href={file.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className={`flex items-center gap-1.5 text-[11px] underline underline-offset-2 ${
-                                      isMe ? "text-primary-foreground" : "text-primary"
-                                    }`}
-                                  >
-                                    <FileText className="size-3" />
-                                    <span className="truncate max-w-[180px]">{file.name}</span>
-                                  </a>
-                                );
-                              })}
-                            </div>
-                          )}
+                            {/* Comment attachments */}
+                            {c.attachments && c.attachments.length > 0 && (
+                              <div
+                                className={`space-y-2 ${
+                                  c.content
+                                    ? `mt-2 border-t pt-2 ${
+                                        isMe ? "border-primary-foreground/25" : "border-border/60"
+                                      }`
+                                    : ""
+                                }`}
+                              >
+                                {c.attachments.map((file: any) => {
+                                  const isImg =
+                                    file.type?.startsWith("image/") ||
+                                    /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name || file.url);
+
+                                  return isImg ? (
+                                    <a
+                                      key={file.url}
+                                      href={file.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="block overflow-hidden rounded-md border border-border/40 bg-background/20 max-w-[260px] hover:opacity-95 transition-opacity"
+                                    >
+                                      <img
+                                        src={file.url}
+                                        alt={file.name || "Attachment"}
+                                        className="w-full h-auto max-h-48 object-cover rounded-md"
+                                      />
+                                      <span className="block text-[10px] p-1 truncate font-mono">
+                                        {file.name}
+                                      </span>
+                                    </a>
+                                  ) : (
+                                    <a
+                                      key={file.url}
+                                      href={file.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`flex items-center gap-1.5 text-[11px] underline underline-offset-2 ${
+                                        isMe ? "text-primary-foreground" : "text-primary"
+                                      }`}
+                                    >
+                                      <FileText className="size-3" />
+                                      <span className="truncate max-w-[180px]">{file.name}</span>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
 
-                          {/* Hover Emoji Reaction Trigger */}
-                          <div className="shrink-0">
+                          {/* Hover Actions: Reaction Trigger, Reply Button, and Edit Button */}
+                          <div className={`flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
                             <MessageReactionsTrigger
                               commentId={c.id}
                               reactions={c.reactions || []}
@@ -1052,6 +1238,37 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                               disabled={isClosedForClient && !isStaff}
                               onToggleReaction={handleToggleReaction}
                             />
+
+                            {/* Reply Button */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setEditingComment(null);
+                                setReplyingTo(c);
+                              }}
+                              disabled={isClosedForClient && !isStaff}
+                              className="size-7 rounded-full text-muted-foreground hover:text-foreground"
+                              title="Reply to comment"
+                            >
+                              <Reply className="size-3.5" />
+                            </Button>
+
+                            {/* Edit Button (own comment) */}
+                            {isMe && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleStartEditComment(c)}
+                                disabled={isClosedForClient && !isStaff}
+                                className="size-7 rounded-full text-muted-foreground hover:text-foreground"
+                                title="Edit message"
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
+                            )}
                           </div>
                         </div>
 
@@ -1145,6 +1362,50 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                   </div>
                 )}
 
+                {/* Replying to Comment Banner */}
+                {replyingTo && (
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-muted/60 border border-border/70 rounded-xl text-xs w-full animate-in fade-in-50 duration-150">
+                    <div className="flex items-center gap-1.5 text-muted-foreground truncate">
+                      <Reply className="size-3.5 text-primary shrink-0" />
+                      <span className="shrink-0">
+                        Replying to <strong className="text-foreground">{replyingTo.author?.full_name || "User"}</strong>:
+                      </span>
+                      <span className="truncate italic text-muted-foreground/90 max-w-[200px] sm:max-w-[400px]">
+                        {replyingTo.content || "Attachment"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingTo(null)}
+                      className="text-muted-foreground hover:text-foreground p-0.5 rounded-sm shrink-0 transition-colors ml-2"
+                      title="Cancel reply"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Editing Comment Banner */}
+                {editingComment && (
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border border-primary/30 rounded-xl text-xs w-full animate-in fade-in-50 duration-150">
+                    <div className="flex items-center gap-1.5 text-primary truncate">
+                      <Pencil className="size-3.5 shrink-0" />
+                      <span className="shrink-0 font-medium">Editing message:</span>
+                      <span className="truncate italic text-foreground max-w-[200px] sm:max-w-[400px]">
+                        {editingComment.content}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCancelEditComment}
+                      className="text-muted-foreground hover:text-foreground p-0.5 rounded-sm shrink-0 transition-colors ml-2"
+                      title="Cancel edit"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+
                 <form onSubmit={handleSendComment} className="flex items-end gap-2 w-full">
                   <input
                     ref={fileInputRef}
@@ -1158,7 +1419,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+                    className="size-9 rounded-full shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading || sending}
                     aria-label="Attach files"
@@ -1166,39 +1427,50 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                     <Paperclip className="size-4" />
                   </Button>
 
-                  <ChatEmojiPicker
-                    onSelectEmoji={handleEmojiSelect}
-                    disabled={uploading || sending}
-                  />
-
-                  <Textarea
-                    ref={textareaRef}
-                    value={newComment}
-                    onChange={(e) => {
-                      setNewComment(e.target.value);
-                      handleUserTyping();
-                    }}
-                    placeholder={
-                      isClosedForClient && isStaff
-                        ? "Write internal staff message (Client will NOT see this)..."
-                        : "Type a message or reply to the ticket..."
-                    }
-                    className="min-h-[40px] max-h-[120px] text-xs resize-none"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendComment(e);
+                  {/* Redesigned Seamless Pill Input Container (No overlapping border) */}
+                  <div className="relative flex-1 flex items-center bg-background border border-border/80 rounded-full focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all px-3 py-0.5 min-w-0">
+                    <Textarea
+                      ref={textareaRef}
+                      value={newComment}
+                      onChange={(e) => {
+                        setNewComment(e.target.value);
+                        handleUserTyping();
+                      }}
+                      placeholder={
+                        editingComment
+                          ? "Edit message... (Enter to save, Esc to cancel)"
+                          : isClosedForClient && isStaff
+                          ? "Write internal staff message (Client will NOT see this)..."
+                          : "Type a message or reply to the ticket..."
                       }
-                    }}
-                  />
+                      className="min-h-9 max-h-28 py-2 text-xs border-0 shadow-none focus-visible:ring-0 focus-visible:outline-none bg-transparent resize-none flex-1"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendComment(e);
+                        } else if (e.key === "Escape") {
+                          if (editingComment) handleCancelEditComment();
+                          if (replyingTo) setReplyingTo(null);
+                        }
+                      }}
+                    />
+
+                    <ChatEmojiPicker
+                      onSelectEmoji={handleEmojiSelect}
+                      disabled={uploading || sending}
+                      variant="ghost"
+                      className="size-8 rounded-full text-muted-foreground hover:text-foreground shrink-0"
+                    />
+                  </div>
 
                   <Button
                     type="submit"
                     size="icon"
-                    className="size-9 shrink-0"
-                    disabled={sending || uploading || (!newComment.trim() && chatAttachments.length === 0)}
+                    className="size-9 rounded-full shrink-0 bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+                    disabled={uploading || (!newComment.trim() && chatAttachments.length === 0)}
+                    title={editingComment ? "Save edit" : "Send message"}
                   >
-                    {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                    <Send className="size-4" />
                   </Button>
                 </form>
               </CardFooter>
