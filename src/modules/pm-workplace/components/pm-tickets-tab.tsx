@@ -15,6 +15,7 @@ import {
   Clock,
   RefreshCw,
   AlertCircle,
+  ArrowRightLeft,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 
 interface PMTicketItem {
@@ -44,10 +46,26 @@ interface PMTicketItem {
   pm_notes?: string;
   rejection_reason?: string;
   assigned_dev_id?: string;
+  system_type_id?: string;
+  choice_id?: string;
   is_human_error?: boolean;
   system_types?: { name: string };
   profiles?: { full_name: string };
   dev?: { full_name: string; email: string };
+}
+
+interface SystemChoiceItem {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+interface SystemTypeItem {
+  id: string;
+  name: string;
+  description?: string;
+  active?: boolean;
+  system_choices?: SystemChoiceItem[];
 }
 
 interface DeveloperItem {
@@ -73,16 +91,37 @@ export function PmTicketsTab() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [search, setSearch] = useState("");
 
+  // System Transfer States
+  const [systems, setSystems] = useState<SystemTypeItem[]>([]);
+  const [userRole, setUserRole] = useState("PM");
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [transferSystemId, setTransferSystemId] = useState("");
+  const [transferChoiceId, setTransferChoiceId] = useState("");
+  const [transferReason, setTransferReason] = useState("");
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
+
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
 
   const loadData = async () => {
     try {
-      const res = await fetch("/api/pm-workplace");
+      const [res, sysRes] = await Promise.all([
+        fetch("/api/pm-workplace"),
+        fetch("/api/systems"),
+      ]);
       const json = await res.json();
       setTickets(json.tickets || []);
       setMyDevs(json.myDevelopers || json.devs || []);
+      setUserRole(json.userRole || "PM");
+
+      if (sysRes.ok) {
+        const sysJson = await sysRes.json();
+        setSystems(sysJson.systems || json.systems || []);
+      } else {
+        setSystems(json.systems || []);
+      }
     } catch {
       console.error("Failed to load PM tickets");
     } finally {
@@ -171,6 +210,76 @@ export function PmTicketsTab() {
     setRejectError(false);
     setIsRejectDialogOpen(false);
     handleUpdateStatus("REJECTED", undefined, rejectionReason);
+  };
+
+  const transferActiveSystem = systems.find((s) => s.id === transferSystemId);
+  const transferAvailableChoices = transferActiveSystem?.system_choices || [];
+
+  const openTransferDialog = async () => {
+    if (!selectedTicket) return;
+    if (systems.length === 0) {
+      try {
+        const sysRes = await fetch("/api/systems");
+        if (sysRes.ok) {
+          const sysJson = await sysRes.json();
+          if (sysJson.systems) setSystems(sysJson.systems);
+        }
+      } catch (e) {
+        console.error("Failed to load systems", e);
+      }
+    }
+    setTransferSystemId(selectedTicket.system_type_id || "");
+    setTransferChoiceId(selectedTicket.choice_id || "");
+    setTransferReason("");
+    setTransferError(null);
+    setIsTransferDialogOpen(true);
+  };
+
+  const handleConfirmTransfer = async () => {
+    if (!selectedTicket || !transferSystemId) {
+      setTransferError("Please select a target system.");
+      return;
+    }
+
+    if (
+      transferSystemId === selectedTicket.system_type_id &&
+      transferChoiceId === (selectedTicket.choice_id || "")
+    ) {
+      setTransferError("Please select a different system or category to transfer.");
+      return;
+    }
+
+    setTransferring(true);
+    setTransferError(null);
+
+    try {
+      const res = await fetch(`/api/tickets/${selectedTicket.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemTypeId: transferSystemId,
+          choiceId: transferChoiceId || null,
+          transferReason,
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to transfer ticket.");
+      }
+
+      setIsTransferDialogOpen(false);
+      setSelectedTicket(null);
+      await loadData();
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setTransferError(err.message);
+      } else {
+        setTransferError("Failed to transfer ticket.");
+      }
+    } finally {
+      setTransferring(false);
+    }
   };
 
   const getPriorityBadge = (p?: string | null) => {
@@ -408,6 +517,18 @@ export function PmTicketsTab() {
                       </Badge>
                     )}
                     {getStatusBadge(selectedTicket.status)}
+                    {(userRole === "PM" || userRole === "ADMIN") && (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={openTransferDialog}
+                        className="text-xs hover:border-primary/60"
+                        title="Transfer Ticket to another System / Category"
+                      >
+                        <ArrowRightLeft className="size-3 mr-1 text-primary" />
+                        Transfer
+                      </Button>
+                    )}
                     <Button variant="outline" size="xs" nativeButton={false} render={<Link href={`/tickets/${selectedTicket.id}`} />}>
                       <MessageSquare className="size-3 mr-1" />
                       Chat
@@ -415,9 +536,21 @@ export function PmTicketsTab() {
                   </div>
                 </div>
                 <CardTitle className="text-base mt-1">{selectedTicket.title}</CardTitle>
-                <CardDescription className="text-xs">
-                  System: {selectedTicket.system_types?.name} &bull; Client: {selectedTicket.profiles?.full_name || "Client"}
-                </CardDescription>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <CardDescription className="text-xs">
+                    System: <strong className="text-foreground">{selectedTicket.system_types?.name || "None"}</strong> &bull; Client: {selectedTicket.profiles?.full_name || "Client"}
+                  </CardDescription>
+                  {(userRole === "PM" || userRole === "ADMIN") && (
+                    <button
+                      type="button"
+                      onClick={openTransferDialog}
+                      className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                    >
+                      <ArrowRightLeft className="size-3" />
+                      Transfer System
+                    </button>
+                  )}
+                </div>
               </CardHeader>
 
               <CardContent className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">
@@ -864,6 +997,135 @@ export function PmTicketsTab() {
               onClick={handleConfirmReject}
             >
               {submitting ? "Rejecting..." : "Confirm Rejection"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer System / Category Modal */}
+      <Dialog
+        open={isTransferDialogOpen}
+        onOpenChange={(open) => {
+          setIsTransferDialogOpen(open);
+          if (!open) setTransferError(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-foreground">
+              <ArrowRightLeft className="size-5 text-primary" />
+              Transfer Ticket {selectedTicket?.ticket_number}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Reassign this ticket to a different system or category if the client reported under the wrong platform.
+            </DialogDescription>
+          </DialogHeader>
+
+          {transferError && (
+            <Alert variant="destructive" className="py-2 text-xs">
+              <AlertCircle className="size-4" />
+              <AlertDescription>{transferError}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-3.5 py-1 text-xs">
+            <div className="rounded-lg border border-border/70 bg-muted/30 p-2.5 flex items-center justify-between">
+              <span className="text-muted-foreground">Current System:</span>
+              <Badge variant="outline" className="font-semibold text-foreground">
+                {selectedTicket?.system_types?.name || "None"}
+              </Badge>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-system" className="text-xs font-semibold">
+                New Target System <span className="text-destructive">*</span>
+              </Label>
+              <SearchableSelect
+                id="transfer-system"
+                options={systems.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                  description: s.description || undefined,
+                }))}
+                value={transferSystemId}
+                onChange={(val) => {
+                  setTransferSystemId(val);
+                  setTransferChoiceId("");
+                  setTransferError(null);
+                }}
+                placeholder="-- Select Target System --"
+                searchPlaceholder="Search system platform..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-category" className="text-xs font-semibold">
+                Issue Category <span className="text-muted-foreground text-[10px] font-normal">(Optional)</span>
+              </Label>
+              <SearchableSelect
+                id="transfer-category"
+                options={transferAvailableChoices.map((c) => ({
+                  value: c.id,
+                  label: c.label,
+                  description: c.description || undefined,
+                }))}
+                value={transferChoiceId}
+                onChange={(val) => setTransferChoiceId(val)}
+                placeholder="-- Select Category --"
+                searchPlaceholder="Search issue category..."
+                disabled={!transferSystemId || transferAvailableChoices.length === 0}
+                emptyMessage={!transferSystemId ? "Choose a Target System first" : "No categories for this system."}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-reason" className="text-xs font-semibold">
+                Transfer Note / Reason <span className="text-muted-foreground text-[10px] font-normal">(Optional)</span>
+              </Label>
+              <Textarea
+                id="transfer-reason"
+                placeholder="e.g. Client reported under CRM instead of Mobile App"
+                rows={2}
+                className="text-xs"
+                value={transferReason}
+                onChange={(e) => setTransferReason(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                A system notice will be added to the chat thread and the ticket will be moved to the new system backlog.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="flex items-center justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsTransferDialogOpen(false);
+                setTransferError(null);
+              }}
+              disabled={transferring}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={transferring || !transferSystemId}
+              onClick={handleConfirmTransfer}
+            >
+              {transferring ? (
+                <>
+                  <RefreshCw className="size-3.5 animate-spin mr-1.5" />
+                  Transferring...
+                </>
+              ) : (
+                <>
+                  <ArrowRightLeft className="size-3.5 mr-1.5" />
+                  Confirm Transfer
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

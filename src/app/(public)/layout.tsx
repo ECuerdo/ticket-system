@@ -6,7 +6,7 @@ import { BrandingProvider } from "@/components/shared/branding-provider";
 export const instant = false;
 
 export async function generateMetadata(): Promise<Metadata> {
-  await connection();
+  "use cache";
   const settings = await getAppSettings();
   return {
     title: settings.sidebar_subtitle

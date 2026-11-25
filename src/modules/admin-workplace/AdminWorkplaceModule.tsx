@@ -6,6 +6,7 @@ import { SystemChoicesTab } from "./components/system-choices-tab";
 import { UserRolesTab } from "./components/user-roles-tab";
 import { PmScopeTab } from "./components/pm-scope-tab";
 import { ReportsTab } from "./components/reports-tab";
+import { GroupChatsTab } from "./components/group-chats-tab";
 
 export default function AdminWorkplaceModule() {
   const searchParams = useSearchParams();
@@ -18,6 +19,7 @@ export default function AdminWorkplaceModule() {
       {activeTab === "roles" && <UserRolesTab />}
       {activeTab === "pm-scope" && <PmScopeTab />}
       {activeTab === "reports" && <ReportsTab />}
+      {activeTab === "group-chats" && <GroupChatsTab />}
     </div>
   );
 }

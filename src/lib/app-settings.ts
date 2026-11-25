@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 export interface AppSettings {
   project_name: string;
@@ -96,8 +96,12 @@ html.dark {
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
+  "use cache";
   try {
-    const supabase = await createClient();
+    const supabase = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+    );
     const { data } = await supabase
       .from("app_settings")
       .select(

@@ -69,7 +69,6 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
         const json = await res.json();
         if (json.systems && json.systems.length > 0) {
           setSystems(json.systems);
-          setSelectedSystemId(json.systems[0].id);
         }
       } catch {
         setErrorMsg("Failed to load systems from database.");
@@ -162,9 +161,7 @@ export default function CreateTicketModule({ userName }: { userName: string }) {
     setLinkUrl("");
     setSelectedChoiceId("");
     setAttachments([]);
-    if (systems.length > 0) {
-      setSelectedSystemId(systems[0].id);
-    }
+    setSelectedSystemId("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
