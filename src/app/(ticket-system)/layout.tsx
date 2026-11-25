@@ -11,7 +11,7 @@ import { AuthCacheGuard } from "@/components/shared/auth-cache-guard";
 export const instant = false;
 
 export async function generateMetadata(): Promise<Metadata> {
-  await connection();
+  "use cache";
   const settings = await getAppSettings();
   return {
     title: settings.sidebar_subtitle

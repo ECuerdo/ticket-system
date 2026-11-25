@@ -270,7 +270,19 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { status, assignedDevId, priority, pmNotes, devNotes, rejectionReason, isHumanError, is_human_error } = await request.json();
+    const {
+      status,
+      assignedDevId,
+      priority,
+      pmNotes,
+      devNotes,
+      rejectionReason,
+      isHumanError,
+      is_human_error,
+      systemTypeId,
+      choiceId,
+      transferReason,
+    } = await request.json();
 
     const response = NextResponse.json({ success: true });
 
@@ -312,6 +324,46 @@ export async function PATCH(
       updatePayload.is_human_error = Boolean(is_human_error);
     }
 
+    // Ticket Transfer to another system (Only PM and ADMIN)
+    let transferNotice: { oldSystemName: string; newSystemName: string } | null = null;
+    if (systemTypeId) {
+      const { data: userProfile } = await supabase
+        .from("profiles")
+        .select("id, role, full_name")
+        .eq("id", user.id)
+        .single();
+
+      if (userProfile?.role !== "PM" && userProfile?.role !== "ADMIN") {
+        return NextResponse.json(
+          { error: "Only PMs and Admins can transfer tickets to another system." },
+          { status: 403 }
+        );
+      }
+
+      const [{ data: oldTicket }, { data: newSystem }] = await Promise.all([
+        supabase
+          .from("tickets")
+          .select("id, ticket_number, title, system_type_id, system_types(name)")
+          .eq("id", id)
+          .single(),
+        supabase
+          .from("system_types")
+          .select("id, name")
+          .eq("id", systemTypeId)
+          .single(),
+      ]);
+
+      const oldSystemName = (oldTicket as any)?.system_types?.name || "Previous System";
+      const newSystemName = newSystem?.name || "New System";
+
+      updatePayload.system_type_id = systemTypeId;
+      updatePayload.choice_id = choiceId || null;
+      updatePayload.assigned_dev_id = null; // Clear assigned developer on system transfer
+      updatePayload.status = "OPEN"; // Reset status to OPEN for new PM triage
+
+      transferNotice = { oldSystemName, newSystemName };
+    }
+
     const { data: updatedTicket, error: updateError } = await supabase
       .from("tickets")
       .update(updatePayload)
@@ -323,7 +375,7 @@ export async function PATCH(
       return NextResponse.json({ error: updateError.message }, { status: 400 });
     }
 
-    // Trigger Status or Assignment Notifications
+    // Trigger Status, Assignment, or Transfer Notifications
     try {
       const { data: actorProfile } = await supabase
         .from("profiles")
@@ -331,6 +383,63 @@ export async function PATCH(
         .eq("id", user.id)
         .single();
       const actorName = actorProfile?.full_name || user.email?.split("@")[0] || "Staff";
+
+      // Transfer system notice and notifications
+      if (transferNotice) {
+        const noteText = transferReason?.trim() ? ` Reason: ${transferReason.trim()}` : "";
+        const noticeMsg = `[System Notice] Ticket transferred from "${transferNotice.oldSystemName}" to "${transferNotice.newSystemName}" by ${actorName}.${noteText}`;
+
+        await supabase.from("ticket_comments").insert({
+          ticket_id: id,
+          user_id: user.id,
+          content: noticeMsg,
+          is_internal: false,
+        });
+
+        // Notify new category PMs
+        const { data: newCategoryPms } = await supabase
+          .from("profiles")
+          .select("id, assigned_system_type_id")
+          .eq("role", "PM");
+
+        if (newCategoryPms && newCategoryPms.length > 0) {
+          for (const pm of newCategoryPms) {
+            if (pm.id === user.id) continue;
+            if (pm.assigned_system_type_id && pm.assigned_system_type_id !== systemTypeId) continue;
+
+            await sendNotification({
+              userId: pm.id,
+              type: "TICKET_NEW",
+              title: `Transferred: ${updatedTicket?.title || "Ticket"}`,
+              message: `Ticket transferred to ${transferNotice.newSystemName} by ${actorName}`,
+              ticketId: id,
+              ticketNumber: updatedTicket?.ticket_number,
+              ticketStatus: "OPEN",
+              actorId: user.id,
+              actorName,
+              actionUrl: `/tickets/${id}`,
+              groupKey: `ticket-${id}`,
+            });
+          }
+        }
+
+        // Notify Admins
+        await notifyAdmins(
+          {
+            type: "TICKET_STATUS",
+            title: `Transferred: ${updatedTicket?.title || "Ticket"}`,
+            message: `Ticket ${updatedTicket?.ticket_number} transferred from ${transferNotice.oldSystemName} to ${transferNotice.newSystemName} by ${actorName}`,
+            ticketId: id,
+            ticketNumber: updatedTicket?.ticket_number,
+            ticketStatus: "OPEN",
+            actorId: user.id,
+            actorName,
+            actionUrl: `/tickets/${id}`,
+            groupKey: `ticket-${id}`,
+          },
+          user.id
+        );
+      }
 
       // 1. Status change notification
       if (status) {

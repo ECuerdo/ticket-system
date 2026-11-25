@@ -5,10 +5,12 @@ import { Smile, Search, X } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface ChatEmojiPickerProps {
   onSelectEmoji: (emoji: string) => void;
   disabled?: boolean;
+  className?: string;
 }
 
 interface EmojiItem {
@@ -240,7 +242,7 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
   },
 ];
 
-export function ChatEmojiPicker({ onSelectEmoji, disabled }: ChatEmojiPickerProps) {
+export function ChatEmojiPicker({ onSelectEmoji, disabled, className }: ChatEmojiPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("quick");
@@ -277,7 +279,10 @@ export function ChatEmojiPicker({ onSelectEmoji, disabled }: ChatEmojiPickerProp
             type="button"
             variant="outline"
             size="icon"
-            className="size-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+            className={cn(
+              "size-9 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors",
+              className
+            )}
             disabled={disabled}
             aria-label="Add emoji"
           />

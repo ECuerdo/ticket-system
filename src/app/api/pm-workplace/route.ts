@@ -60,6 +60,30 @@ export async function GET() {
       .select("id, full_name, email, role")
       .eq("role", "DEV");
 
+    // Fetch all active system types with their choices for transfer
+    const { data: systemsData } = await supabase
+      .from("system_types")
+      .select("id, name, description, active, system_choices(id, label, description, active)")
+      .eq("active", true)
+      .order("name", { ascending: true });
+
+    // Fetch global categories where system_type_id IS NULL
+    const { data: globalChoices } = await supabase
+      .from("system_choices")
+      .select("id, label, description, active")
+      .is("system_type_id", null)
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+
+    const enrichedSystems = (systemsData || []).map((s: any) => {
+      const systemSpecific = (s.system_choices || []).filter((c: any) => c.active !== false);
+      const activeGlobals = (globalChoices || []).filter((c: any) => c.active !== false);
+      return {
+        ...s,
+        system_choices: [...activeGlobals, ...systemSpecific],
+      };
+    });
+
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
@@ -72,6 +96,8 @@ export async function GET() {
       devs: myDevelopers.length > 0 ? myDevelopers : (allDevs || []),
       assignedSystemId: assignedSystemIds[0] || profile?.assigned_system_type_id || null,
       assignedSystemIds: assignedSystemIds,
+      systems: enrichedSystems || [],
+      userRole: profile?.role || "PM",
     });
   } catch {
     return NextResponse.json({ error: "Failed to fetch PM tickets" }, { status: 500 });
