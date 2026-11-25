@@ -73,7 +73,7 @@ export async function GET(
     // 3. Fetch conversation comments with pagination (15 latest by default or before timestamp)
     let query = supabase
       .from("ticket_comments")
-      .select("*, author:user_id(full_name, email, role), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
+      .select("*, author:user_id(full_name, email, role), reply_to:reply_to_id(id, content, is_internal, author:user_id(id, full_name, role)), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
       .eq("ticket_id", id);
 
     if (!isStaff) {
@@ -119,7 +119,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { content, attachments } = await request.json();
+    const { content, attachments, reply_to_id } = await request.json();
 
     const trimmedContent = (content || "").trim();
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -185,8 +185,9 @@ export async function POST(
         content: trimmedContent,
         attachments: hasAttachments ? attachments : [],
         is_internal: isInternal,
+        reply_to_id: reply_to_id || null,
       })
-      .select("*, author:user_id(full_name, email, role)")
+      .select("*, author:user_id(full_name, email, role), reply_to:reply_to_id(id, content, is_internal, author:user_id(id, full_name, role))")
       .single();
 
     if (commentError) {
@@ -270,19 +271,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const {
-      status,
-      assignedDevId,
-      priority,
-      pmNotes,
-      devNotes,
-      rejectionReason,
-      isHumanError,
-      is_human_error,
-      systemTypeId,
-      choiceId,
-      transferReason,
-    } = await request.json();
+    const body = await request.json();
 
     const response = NextResponse.json({ success: true });
 
@@ -307,6 +296,68 @@ export async function PATCH(
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Handle Comment Edit
+    if (body.action === "edit_comment") {
+      const { commentId, content } = body;
+      const trimmed = (content || "").trim();
+      if (!trimmed) {
+        return NextResponse.json({ error: "Comment content cannot be empty" }, { status: 400 });
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("id, role")
+        .eq("id", user.id)
+        .single();
+      const userRole = profile?.role || "CLIENT";
+
+      const { data: targetComment } = await supabase
+        .from("ticket_comments")
+        .select("id, user_id")
+        .eq("id", commentId)
+        .eq("ticket_id", id)
+        .single();
+
+      if (!targetComment) {
+        return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+      }
+
+      if (targetComment.user_id !== user.id && userRole !== "ADMIN") {
+        return NextResponse.json({ error: "You can only edit your own comments" }, { status: 403 });
+      }
+
+      const { data: updatedComment, error: updateErr } = await supabase
+        .from("ticket_comments")
+        .update({
+          content: trimmed,
+          is_edited: true,
+          edited_at: new Date().toISOString(),
+        })
+        .eq("id", commentId)
+        .select("*, author:user_id(full_name, email, role), reply_to:reply_to_id(id, content, is_internal, author:user_id(id, full_name, role)), reactions:comment_reactions(id, emoji, user_id, created_at, user:profiles(id, full_name, email, role))")
+        .single();
+
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 400 });
+      }
+
+      return NextResponse.json({ success: true, comment: updatedComment });
+    }
+
+    const {
+      status,
+      assignedDevId,
+      priority,
+      pmNotes,
+      devNotes,
+      rejectionReason,
+      isHumanError,
+      is_human_error,
+      systemTypeId,
+      choiceId,
+      transferReason,
+    } = body;
 
     const updatePayload: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
