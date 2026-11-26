@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import {
   CheckCircle2,
   XCircle,
@@ -43,6 +44,7 @@ interface PMTicketItem {
   description: string;
   priority?: string | null;
   status: string;
+  created_at?: string;
   pm_notes?: string;
   rejection_reason?: string;
   assigned_dev_id?: string;
@@ -105,14 +107,16 @@ export function PmTicketsTab() {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [res, sysRes] = await Promise.all([
         fetch("/api/pm-workplace"),
         fetch("/api/systems"),
       ]);
       const json = await res.json();
-      setTickets(json.tickets || []);
+      const updatedTickets = json.tickets || [];
+      setTickets(updatedTickets);
+      setSelectedTicket((prev) => (prev ? updatedTickets.find((t: PMTicketItem) => t.id === prev.id) || prev : null));
       setMyDevs(json.myDevelopers || json.devs || []);
       setUserRole(json.userRole || "PM");
 
@@ -127,11 +131,45 @@ export function PmTicketsTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const ticketsRef = useRef(tickets);
+  useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
 
   useEffect(() => {
     loadData();
-  }, []);
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel("pm-tickets-list-realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "tickets" },
+        () => {
+          // New Ticket
+          loadData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "tickets" },
+        (payload) => {
+          const newStatus = payload.new?.status;
+          const oldTicket = ticketsRef.current.find((t) => t.id === payload.new?.id);
+          // Only trigger on Changed Status (or ticket newly transferred/scoped to this list)
+          if (!oldTicket || oldTicket.status !== newStatus) {
+            loadData();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
 
   const handleToggleHumanError = async (checked: boolean | "indeterminate") => {
     if (!selectedTicket) return;
@@ -444,6 +482,25 @@ export function PmTicketsTab() {
                           </div>
                           <span>Client: {t.profiles?.full_name || "Client"}</span>
                         </div>
+
+                        {t.created_at && (
+                          <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground/80">
+                            <Clock className="size-3 shrink-0 text-muted-foreground/60" />
+                            <span>
+                              Created: {new Date(t.created_at).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}{" "}
+                              &bull;{" "}
+                              {new Date(t.created_at).toLocaleTimeString("en-US", {
+                                hour: "numeric",
+                                minute: "2-digit",
+                                hour12: true,
+                              })}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -551,6 +608,24 @@ export function PmTicketsTab() {
                     </button>
                   )}
                 </div>
+                {selectedTicket.created_at && (
+                  <div className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground">
+                    <Clock className="size-3 shrink-0 text-muted-foreground/70" />
+                    <span>
+                      Created: {new Date(selectedTicket.created_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}{" "}
+                      at{" "}
+                      {new Date(selectedTicket.created_at).toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true,
+                      })}
+                    </span>
+                  </div>
+                )}
               </CardHeader>
 
               <CardContent className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">

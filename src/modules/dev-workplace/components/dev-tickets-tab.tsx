@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import {
   CheckCircle2,
   Clock,
@@ -27,6 +28,7 @@ interface DevTicketItem {
   description: string;
   priority: string;
   status: string;
+  created_at?: string;
   is_human_error?: boolean;
   pm_notes?: string;
   dev_notes?: string;
@@ -47,21 +49,57 @@ export function DevTicketsTab() {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(5);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const res = await fetch("/api/dev-workplace");
       const json = await res.json();
-      setTickets(json.tickets || []);
+      const updatedTickets = json.tickets || [];
+      setTickets(updatedTickets);
+      setSelectedTicket((prev) => (prev ? updatedTickets.find((t: DevTicketItem) => t.id === prev.id) || prev : null));
     } catch {
       console.error("Failed to load dev tasks");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const ticketsRef = useRef(tickets);
+  useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
 
   useEffect(() => {
     loadData();
-  }, []);
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel("dev-tickets-list-realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "tickets" },
+        () => {
+          // New Ticket
+          loadData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "tickets" },
+        (payload) => {
+          const newStatus = payload.new?.status;
+          const oldTicket = ticketsRef.current.find((t) => t.id === payload.new?.id);
+          // Only trigger on Changed Status (or ticket newly assigned to this dev)
+          if (!oldTicket || oldTicket.status !== newStatus) {
+            loadData();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
 
   const handleResolveTicket = async (status: "IN_DEVELOPMENT" | "RESOLVED") => {
     if (!selectedTicket) return;
@@ -242,6 +280,25 @@ export function DevTicketsTab() {
                           </div>
                           <span>Client: {t.profiles?.full_name || "Client"}</span>
                         </div>
+
+                        {t.created_at && (
+                          <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground/80">
+                            <Clock className="size-3 shrink-0 text-muted-foreground/60" />
+                            <span>
+                              Created: {new Date(t.created_at).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}{" "}
+                              &bull;{" "}
+                              {new Date(t.created_at).toLocaleTimeString("en-US", {
+                                hour: "numeric",
+                                minute: "2-digit",
+                                hour12: true,
+                              })}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -325,6 +382,24 @@ export function DevTicketsTab() {
                 <CardDescription className="text-xs">
                   System: {selectedTicket.system_types?.name}
                 </CardDescription>
+                {selectedTicket.created_at && (
+                  <div className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground">
+                    <Clock className="size-3 shrink-0 text-muted-foreground/70" />
+                    <span>
+                      Created: {new Date(selectedTicket.created_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}{" "}
+                      at{" "}
+                      {new Date(selectedTicket.created_at).toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true,
+                      })}
+                    </span>
+                  </div>
+                )}
               </CardHeader>
 
               <CardContent className="p-4 space-y-4 flex-1 overflow-y-auto min-h-0">

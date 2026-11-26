@@ -23,6 +23,20 @@ export default async function Page({
   const { id } = await params;
   const headerUser = await getHeaderUser();
 
+  const backHref =
+    headerUser.role === "PM"
+      ? "/pm-workplace?tab=tickets"
+      : headerUser.role === "DEV"
+      ? "/dev-workplace?tab=tickets"
+      : "/tickets";
+
+  const breadcrumbLabel =
+    headerUser.role === "PM"
+      ? "PM Tickets"
+      : headerUser.role === "DEV"
+      ? "Dev Tickets"
+      : "My Tickets";
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b shadow-xs bg-background sm:h-16 overflow-hidden">
@@ -42,7 +56,7 @@ export default async function Page({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                 <BreadcrumbItem className="hidden md:block shrink-0">
-                  <BreadcrumbLink href="/tickets">Tickets</BreadcrumbLink>
+                  <BreadcrumbLink href={backHref}>{breadcrumbLabel}</BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                 <BreadcrumbItem className="min-w-0 overflow-hidden">
@@ -62,7 +76,7 @@ export default async function Page({
 
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">
         <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading Ticket Conversation...</div>}>
-          <TicketDetailConversation ticketId={id} />
+          <TicketDetailConversation ticketId={id} initialRole={headerUser.role} />
         </Suspense>
       </main>
     </div>

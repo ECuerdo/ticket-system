@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendNotification } from "@/lib/notifications";
 
 const VALID_CHAT_TYPES = ["pm", "dev", "staff"] as const;
 type ChatType = typeof VALID_CHAT_TYPES[number];
@@ -170,6 +171,18 @@ export async function GET(
       pinnedMessages = pinnedData || [];
     }
 
+    // Fetch read receipts for this group chat with user profile info
+    const { data: readsData } = await supabase
+      .from("group_chat_reads")
+      .select("user_id, last_read_at, user:profiles(id, full_name, avatar_url, role)")
+      .eq("chat_type", chatType);
+
+    // Fetch allowed members for this chat to support @mentions
+    const { data: eligibleMembers } = await supabase
+      .from("profiles")
+      .select("id, full_name, avatar_url, role")
+      .in("role", allowedRoles);
+
     return NextResponse.json({
       chatType,
       isEnabled,
@@ -181,6 +194,8 @@ export async function GET(
         avatar_url: profile?.avatar_url,
       },
       messages: sanitizedMessages,
+      reads: readsData || [],
+      members: eligibleMembers || [],
       hasMore,
       pinnedMessages,
     });
@@ -272,6 +287,56 @@ export async function POST(
 
     if (insertErr) {
       return NextResponse.json({ error: insertErr.message }, { status: 400 });
+    }
+
+    // Process @everyone and @<fullname> mentions for notifications
+    try {
+      const senderName = profile?.full_name || user.email?.split("@")[0] || "Team Member";
+      const chatRoomName = chatType === "pm" ? "PM Chat" : chatType === "dev" ? "Dev Chat" : "Staff Chat";
+      const actionUrl = `/${chatType}-chat`;
+
+      const { data: eligibleProfiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, role")
+        .in("role", allowedRoles);
+
+      const targetUserIds = new Set<string>();
+
+      // Check for @everyone or @all (case-insensitive)
+      const hasEveryone = /@(everyone|all)\b/i.test(messageText);
+
+      if (hasEveryone) {
+        eligibleProfiles?.forEach((p) => {
+          if (p.id !== user.id) {
+            targetUserIds.add(p.id);
+          }
+        });
+      } else {
+        // Match specific names: e.g. @Full Name or @"Full Name" or @FirstName
+        eligibleProfiles?.forEach((p) => {
+          if (p.id === user.id || !p.full_name) return;
+          const escapedName = p.full_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const nameRegex = new RegExp(`@${escapedName}\\b`, "i");
+          if (nameRegex.test(messageText)) {
+            targetUserIds.add(p.id);
+          }
+        });
+      }
+
+      for (const targetId of targetUserIds) {
+        await sendNotification({
+          userId: targetId,
+          type: "CHAT_MENTION",
+          title: `${chatRoomName}: Mention from ${senderName}`,
+          message: `${senderName}: ${messageText.slice(0, 80)}`,
+          actorId: user.id,
+          actorName: senderName,
+          actionUrl,
+          groupKey: `chat-${chatType}`,
+        });
+      }
+    } catch (notifErr) {
+      console.error("Failed to send chat mention notifications:", notifErr);
     }
 
     return NextResponse.json({

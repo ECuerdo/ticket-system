@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Bell,
+  BellRing,
   MessageSquare,
   Heart,
   CheckCircle2,
@@ -14,6 +15,8 @@ import {
   UserPlus,
   CheckCheck,
   Sparkles,
+  ArrowRightLeft,
+  AtSign,
 } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
@@ -123,6 +126,10 @@ function getNotificationIcon(type: string) {
       return <Sparkles className="size-3.5 text-amber-500" />;
     case "TICKET_ASSIGNED":
       return <UserCheck className="size-3.5 text-purple-500" />;
+    case "TICKET_TRANSFERRED":
+      return <ArrowRightLeft className="size-3.5 text-blue-500" />;
+    case "CHAT_MENTION":
+      return <AtSign className="size-3.5 text-amber-500" />;
     case "REPORT_NEW":
       return <ShieldAlert className="size-3.5 text-destructive" />;
     case "PASSWORD_CHANGED":
@@ -136,10 +143,85 @@ function getNotificationIcon(type: string) {
 
 export function NotificationBell({ user }: { user: HeaderUser }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>("default");
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setPermission(Notification.permission);
+    }
+  }, []);
+
+  const requestDesktopPermission = useCallback(async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    try {
+      const res = await Notification.requestPermission();
+      setPermission(res);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const showDesktopNotification = useCallback(
+    (item: NotificationItem) => {
+      if (typeof window === "undefined") return;
+
+      // Subtle audio ping
+      try {
+        const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.12); // A5
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.25);
+      } catch {
+        // audio playback error ignore
+      }
+
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+
+      try {
+        const notifTitle = item.ticket_number
+          ? `${item.ticket_number} • ${getCleanTitle(item)}`
+          : item.title || "Vertex Ticket";
+
+        const notif = new Notification(notifTitle, {
+          body: item.message || "You have a new notification.",
+          tag: item.group_key || item.id,
+          requireInteraction: false,
+        });
+
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+          if (item.action_url) {
+            router.push(item.action_url);
+          } else if (item.ticket_id) {
+            router.push(`/tickets/${item.ticket_id}`);
+          }
+        };
+      } catch (err) {
+        console.error("Desktop notification error:", err);
+      }
+    },
+    [router]
+  );
+
+  const showDesktopNotificationRef = useRef(showDesktopNotification);
+  useEffect(() => {
+    showDesktopNotificationRef.current = showDesktopNotification;
+  });
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -152,6 +234,88 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
       // background fetch catch
     }
   }, []);
+
+  // Update browser tab title and favicon with unread counter (e.g. "(1) Messenger")
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    // 1. Update Title: "(N) Page Title"
+    const currentTitle = document.title || "Vertex Ticket";
+    // Strip existing (N) prefix if present
+    const cleanTitle = currentTitle.replace(/^\(\d+\+?\)\s*/, "");
+    if (unreadCount > 0) {
+      const displayCount = unreadCount > 99 ? "99+" : unreadCount;
+      document.title = `(${displayCount}) ${cleanTitle}`;
+    } else {
+      document.title = cleanTitle;
+    }
+
+    // 2. Update Favicon with a red badge dot
+    const faviconLink = (document.querySelector("link[rel*='icon']") as HTMLLinkElement) || null;
+    const originalHref = faviconLink?.dataset.originalHref || faviconLink?.href || "/favicon.ico";
+
+    if (faviconLink && !faviconLink.dataset.originalHref) {
+      faviconLink.dataset.originalHref = originalHref;
+    }
+
+    const setFaviconHref = (href: string) => {
+      const existing = document.querySelectorAll("link[rel*='icon']");
+      const newLink = document.createElement("link");
+      newLink.rel = "shortcut icon";
+      newLink.type = "image/png";
+      newLink.href = href;
+      existing.forEach((el) => el.remove());
+      document.head.appendChild(newLink);
+    };
+
+    if (unreadCount > 0) {
+      const drawBadgeOnCanvas = (baseImg?: HTMLImageElement) => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = 32;
+          canvas.height = 32;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+
+          if (baseImg) {
+            ctx.drawImage(baseImg, 0, 0, 32, 32);
+          } else {
+            // High-contrast clean fallback base icon
+            ctx.beginPath();
+            ctx.arc(16, 16, 14, 0, 2 * Math.PI);
+            ctx.fillStyle = "#2563eb"; // blue-600
+            ctx.fill();
+          }
+
+          // Outer white border ring for high contrast separation (Messenger style)
+          ctx.beginPath();
+          ctx.arc(23, 9, 6.5, 0, 2 * Math.PI);
+          ctx.fillStyle = "#ffffff";
+          ctx.fill();
+
+          // Inner solid red badge dot
+          ctx.beginPath();
+          ctx.arc(23, 9, 4.5, 0, 2 * Math.PI);
+          ctx.fillStyle = "#ef4444"; // red-500
+          ctx.fill();
+
+          setFaviconHref(canvas.toDataURL("image/png"));
+        } catch {
+          // ignore canvas taint errors
+        }
+      };
+
+      const img = new Image();
+      if (originalHref.startsWith("http://") || originalHref.startsWith("https://")) {
+        img.crossOrigin = "anonymous";
+      }
+      img.onload = () => drawBadgeOnCanvas(img);
+      img.onerror = () => drawBadgeOnCanvas();
+      img.src = originalHref;
+    } else {
+      setFaviconHref(originalHref);
+    }
+  }, [unreadCount, pathname]);
 
   useEffect(() => {
     fetchNotifications();
@@ -170,8 +334,18 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
           table: "notifications",
           filter: `user_id=eq.${user.id}`,
         },
-        () => {
+        (payload) => {
           fetchNotifications();
+
+          if (
+            (payload.eventType === "INSERT" ||
+              (payload.eventType === "UPDATE" &&
+                payload.new &&
+                !(payload.new as NotificationItem).is_read)) &&
+            payload.new
+          ) {
+            showDesktopNotificationRef.current(payload.new as NotificationItem);
+          }
         }
       )
       .subscribe();
@@ -226,7 +400,15 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen && permission === "default") {
+          requestDesktopPermission();
+        }
+      }}
+    >
       <PopoverTrigger
         type="button"
         aria-label="View notifications"
@@ -274,6 +456,56 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
             </Button>
           )}
         </div>
+
+        {/* Desktop Notification Status / Test Banner */}
+        {permission === "default" ? (
+          <div className="bg-primary/10 border-b border-primary/20 px-3.5 py-2 flex items-center justify-between text-[11px] text-foreground">
+            <div className="flex items-center gap-1.5 font-medium">
+              <BellRing className="size-3.5 text-primary shrink-0" />
+              <span>Enable desktop notifications</span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 text-[10px] px-2 font-medium bg-background hover:bg-muted"
+              onClick={requestDesktopPermission}
+            >
+              Allow
+            </Button>
+          </div>
+        ) : permission === "granted" ? (
+          <div className="bg-muted/30 border-b border-border/40 px-3.5 py-1.5 flex items-center justify-between text-[10.5px] text-muted-foreground">
+            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              Desktop notifications active
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                showDesktopNotification({
+                  id: "test-" + Date.now(),
+                  user_id: user?.id || "",
+                  type: "TICKET_RESPONSE",
+                  title: "Notification Test",
+                  ticket_number: "TEST-01",
+                  message: "Desktop notifications are working properly!",
+                  is_read: false,
+                  stack_count: 1,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+              }}
+              className="text-primary hover:underline font-medium cursor-pointer"
+            >
+              Send Test
+            </button>
+          </div>
+        ) : (
+          <div className="bg-destructive/10 border-b border-destructive/20 px-3.5 py-1.5 flex items-center justify-between text-[10.5px] text-destructive">
+            <span>Notifications blocked in browser settings</span>
+          </div>
+        )}
 
         {/* Notification List */}
         <div className="max-h-[360px] overflow-y-auto divide-y divide-border/40 min-h-0">
