@@ -244,6 +244,30 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
     staff: 0,
   });
 
+  const [ticketBadgeCounts, setTicketBadgeCounts] = useState<{
+    pmTickets: number;
+    devTickets: number;
+  }>({
+    pmTickets: 0,
+    devTickets: 0,
+  });
+
+  const loadTicketBadgeCounts = useCallback(async () => {
+    if (!isPM && !isDev) return;
+    try {
+      const res = await fetch("/api/tickets/badge-counts");
+      if (res.ok) {
+        const json = await res.json();
+        setTicketBadgeCounts({
+          pmTickets: json.pmTickets ?? 0,
+          devTickets: json.devTickets ?? 0,
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, [isPM, isDev]);
+
   const loadUnreadCounts = useCallback(async () => {
     if (!isStaff) return;
     try {
@@ -310,11 +334,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
     }
   }, [pathname, isStaff]);
 
-  // Realtime subscription for unread messages
+  // Realtime subscription for unread messages and ticket badges
   useEffect(() => {
     if (!isStaff) return;
 
     loadUnreadCounts();
+    loadTicketBadgeCounts();
 
     const supabase = createClient();
     const channel = supabase
@@ -370,6 +395,13 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
           }
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tickets" },
+        () => {
+          loadTicketBadgeCounts();
+        }
+      )
       .subscribe();
 
     const handleReadEvent = (e: Event) => {
@@ -382,26 +414,34 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
       }
     };
 
+    const handleTicketUpdate = () => {
+      loadTicketBadgeCounts();
+    };
+
     window.addEventListener("group-chat-read", handleReadEvent);
+    window.addEventListener("ticket-updated", handleTicketUpdate);
 
     const handleFocus = () => {
       loadUnreadCounts();
+      loadTicketBadgeCounts();
     };
     window.addEventListener("focus", handleFocus);
 
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
         loadUnreadCounts();
+        loadTicketBadgeCounts();
       }
     }, 25000);
 
     return () => {
       channel.unsubscribe();
       window.removeEventListener("group-chat-read", handleReadEvent);
+      window.removeEventListener("ticket-updated", handleTicketUpdate);
       window.removeEventListener("focus", handleFocus);
       clearInterval(interval);
     };
-  }, [isStaff, pathname, user.id, loadUnreadCounts]);
+  }, [isStaff, pathname, user.id, loadUnreadCounts, loadTicketBadgeCounts]);
 
   const teamChatItems = [
     ...(isPM && (isAdmin || chatSettings.pm_chat_enabled)
@@ -541,11 +581,18 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                       <Kanban className="size-4 shrink-0" />
                       <span className="truncate text-sm font-medium">PM Workplace</span>
                     </div>
-                    <ChevronDown
-                      className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
-                        pmOpen ? "rotate-0" : "-rotate-90"
-                      }`}
-                    />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!pmOpen && ticketBadgeCounts.pmTickets > 0 && (
+                        <span className="flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-amber-500 text-white shadow-2xs dark:bg-amber-600">
+                          {ticketBadgeCounts.pmTickets > 99 ? "99+" : ticketBadgeCounts.pmTickets}
+                        </span>
+                      )}
+                      <ChevronDown
+                        className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
+                          pmOpen ? "rotate-0" : "-rotate-90"
+                        }`}
+                      />
+                    </div>
                   </SidebarMenuButton>
 
                   {pmOpen && (
@@ -577,7 +624,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                               ) : (
                                 <SubIcon className="size-3.5 shrink-0" />
                               )}
-                              <span className="truncate">{sub.title}</span>
+                              <span className="truncate flex-1">{sub.title}</span>
+                              {sub.tab === "tickets" && ticketBadgeCounts.pmTickets > 0 && (
+                                <span className="ml-auto flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-amber-500 text-white shadow-2xs dark:bg-amber-600">
+                                  {ticketBadgeCounts.pmTickets > 99 ? "99+" : ticketBadgeCounts.pmTickets}
+                                </span>
+                              )}
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
                         );
@@ -600,11 +652,18 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                       <Code2 className="size-4 shrink-0" />
                       <span className="truncate text-sm font-medium">Dev Workplace</span>
                     </div>
-                    <ChevronDown
-                      className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
-                        devOpen ? "rotate-0" : "-rotate-90"
-                      }`}
-                    />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!devOpen && ticketBadgeCounts.devTickets > 0 && (
+                        <span className="flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-purple-600 text-white shadow-2xs dark:bg-purple-500">
+                          {ticketBadgeCounts.devTickets > 99 ? "99+" : ticketBadgeCounts.devTickets}
+                        </span>
+                      )}
+                      <ChevronDown
+                        className={`size-3.5 text-muted-foreground transition-transform duration-200 shrink-0 ${
+                          devOpen ? "rotate-0" : "-rotate-90"
+                        }`}
+                      />
+                    </div>
                   </SidebarMenuButton>
 
                   {devOpen && (
@@ -636,7 +695,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                               ) : (
                                 <SubIcon className="size-3.5 shrink-0" />
                               )}
-                              <span className="truncate">{sub.title}</span>
+                              <span className="truncate flex-1">{sub.title}</span>
+                              {sub.tab === "tickets" && ticketBadgeCounts.devTickets > 0 && (
+                                <span className="ml-auto flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-purple-600 text-white shadow-2xs dark:bg-purple-500">
+                                  {ticketBadgeCounts.devTickets > 99 ? "99+" : ticketBadgeCounts.devTickets}
+                                </span>
+                              )}
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
                         );

@@ -14,6 +14,8 @@ export type NotificationType =
   | "TICKET_STATUS"
   | "TICKET_NEW"
   | "TICKET_ASSIGNED"
+  | "TICKET_TRANSFERRED"
+  | "CHAT_MENTION"
   | "REPORT_NEW"
   | "PASSWORD_CHANGED"
   | "USER_REGISTERED";

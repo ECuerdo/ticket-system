@@ -97,9 +97,16 @@ export async function GET(
     // Reverse to chronological order (oldest to newest in the chunk)
     const comments = sliced.reverse();
 
+    // Fetch read receipts for this ticket
+    const { data: readsData } = await supabase
+      .from("ticket_reads")
+      .select("user_id, last_read_at, user:profiles(id, full_name, avatar_url, role)")
+      .eq("ticket_id", id);
+
     return NextResponse.json({
       ticket,
       comments,
+      reads: readsData || [],
       hasMore,
       totalCount: totalCommentsCount ?? (rawComments?.length || 0),
       currentUserId: user.id,
@@ -410,6 +417,7 @@ export async function PATCH(
       updatePayload.system_type_id = systemTypeId;
       updatePayload.choice_id = choiceId || null;
       updatePayload.assigned_dev_id = null; // Clear assigned developer on system transfer
+      updatePayload.assigned_pm_id = null; // Clear assigned PM so target system's PM can triage/claim
       updatePayload.status = "OPEN"; // Reset status to OPEN for new PM triage
 
       transferNotice = { oldSystemName, newSystemName };
@@ -447,39 +455,63 @@ export async function PATCH(
           is_internal: false,
         });
 
-        // Notify new category PMs
-        const { data: newCategoryPms } = await supabase
+        // 1. Fetch all PMs
+        const { data: allPms } = await supabase
           .from("profiles")
-          .select("id, assigned_system_type_id")
+          .select("id, full_name, email, role, assigned_system_type_id")
           .eq("role", "PM");
 
-        if (newCategoryPms && newCategoryPms.length > 0) {
-          for (const pm of newCategoryPms) {
-            if (pm.id === user.id) continue;
-            if (pm.assigned_system_type_id && pm.assigned_system_type_id !== systemTypeId) continue;
+        // 2. Fetch all PM scopes from pm_system_scopes
+        const { data: allScopes } = await supabase
+          .from("pm_system_scopes")
+          .select("pm_id, system_type_id");
 
-            await sendNotification({
-              userId: pm.id,
-              type: "TICKET_NEW",
-              title: `Transferred: ${updatedTicket?.title || "Ticket"}`,
-              message: `Ticket transferred to ${transferNotice.newSystemName} by ${actorName}`,
-              ticketId: id,
-              ticketNumber: updatedTicket?.ticket_number,
-              ticketStatus: "OPEN",
-              actorId: user.id,
-              actorName,
-              actionUrl: `/tickets/${id}`,
-              groupKey: `ticket-${id}`,
-            });
+        // Map pmId to their assigned system_type_ids
+        const pmScopesMap = new Map<string, Set<string>>();
+        for (const scope of allScopes || []) {
+          if (!pmScopesMap.has(scope.pm_id)) {
+            pmScopesMap.set(scope.pm_id, new Set());
+          }
+          pmScopesMap.get(scope.pm_id)!.add(scope.system_type_id);
+        }
+
+        // Determine target PMs specifically assigned to the new system
+        const targetPmIds = new Set<string>();
+        for (const pm of allPms || []) {
+          const scopes = pmScopesMap.get(pm.id);
+          const hasScopes = scopes && scopes.size > 0;
+
+          if (hasScopes) {
+            if (scopes.has(systemTypeId)) {
+              targetPmIds.add(pm.id);
+            }
+          } else if (pm.assigned_system_type_id) {
+            if (pm.assigned_system_type_id === systemTypeId) {
+              targetPmIds.add(pm.id);
+            }
+          } else {
+            // General PM with no specific system assigned -> handles all systems
+            targetPmIds.add(pm.id);
           }
         }
 
-        // Notify Admins
-        await notifyAdmins(
-          {
-            type: "TICKET_STATUS",
-            title: `Transferred: ${updatedTicket?.title || "Ticket"}`,
-            message: `Ticket ${updatedTicket?.ticket_number} transferred from ${transferNotice.oldSystemName} to ${transferNotice.newSystemName} by ${actorName}`,
+        // If no PM was specifically assigned, notify all PMs as fallback
+        if (targetPmIds.size === 0 && allPms && allPms.length > 0) {
+          for (const pm of allPms) {
+            targetPmIds.add(pm.id);
+          }
+        }
+
+        const transferTitle = `Transferred: ${updatedTicket?.ticket_number || ""} ${updatedTicket?.title || "Ticket"}`.trim();
+        const transferMessage = `Ticket transferred from "${transferNotice.oldSystemName}" to "${transferNotice.newSystemName}" by ${actorName}${noteText}`;
+
+        // Notify all target PMs for this system
+        for (const pmId of targetPmIds) {
+          await sendNotification({
+            userId: pmId,
+            type: "TICKET_TRANSFERRED",
+            title: transferTitle,
+            message: transferMessage,
             ticketId: id,
             ticketNumber: updatedTicket?.ticket_number,
             ticketStatus: "OPEN",
@@ -487,13 +519,43 @@ export async function PATCH(
             actorName,
             actionUrl: `/tickets/${id}`,
             groupKey: `ticket-${id}`,
-          },
-          user.id
-        );
+          });
+        }
+
+        // Also notify the ticket's client if they are not already in targetPmIds
+        if (updatedTicket?.client_id && !targetPmIds.has(updatedTicket.client_id)) {
+          await sendNotification({
+            userId: updatedTicket.client_id,
+            type: "TICKET_TRANSFERRED",
+            title: transferTitle,
+            message: `Your ticket was transferred to "${transferNotice.newSystemName}".${noteText}`,
+            ticketId: id,
+            ticketNumber: updatedTicket?.ticket_number,
+            ticketStatus: "OPEN",
+            actorId: user.id,
+            actorName,
+            actionUrl: `/tickets/${id}`,
+            groupKey: `ticket-${id}`,
+          });
+        }
+
+        // Notify Admins
+        await notifyAdmins({
+          type: "TICKET_TRANSFERRED",
+          title: transferTitle,
+          message: `Ticket ${updatedTicket?.ticket_number} transferred from "${transferNotice.oldSystemName}" to "${transferNotice.newSystemName}" by ${actorName}${noteText}`,
+          ticketId: id,
+          ticketNumber: updatedTicket?.ticket_number,
+          ticketStatus: "OPEN",
+          actorId: user.id,
+          actorName,
+          actionUrl: `/tickets/${id}`,
+          groupKey: `ticket-${id}`,
+        });
       }
 
       // 1. Status change notification
-      if (status) {
+      if (status && !transferNotice) {
         const recipients = new Set<string>();
         if (updatedTicket.client_id && updatedTicket.client_id !== user.id) {
           recipients.add(updatedTicket.client_id);

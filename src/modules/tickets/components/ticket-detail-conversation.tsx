@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -20,6 +20,7 @@ import {
   Reply,
   Pencil,
   X,
+  Upload,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,12 +37,24 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { createClient } from "@/lib/supabase/client";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format, isToday, isYesterday } from "date-fns";
+import { cn } from "@/lib/utils";
 import { ChatEmojiPicker } from "./chat-emoji-picker";
 import {
   MessageReactionsTrigger,
   MessageReactionsBadge,
 } from "./comment-reactions";
+
+function formatMessageDate(dateStr: string) {
+  try {
+    const d = new Date(dateStr);
+    if (isToday(d)) return "Today";
+    if (isYesterday(d)) return "Yesterday";
+    return format(d, "MMMM d, yyyy");
+  } catch {
+    return "";
+  }
+}
 
 function getRelativeTime(dateString: string) {
   try {
@@ -58,25 +71,74 @@ function getRelativeTime(dateString: string) {
   }
 }
 
-interface TicketDetailProps {
-  ticketId: string;
+function getBubbleRadius(isMe: boolean, isSameAsPrev: boolean, isSameAsNext: boolean) {
+  if (isMe) {
+    if (!isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs";
+    }
+    if (!isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tr-2xl rounded-br-xs";
+    }
+    if (isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs rounded-br-xs";
+    }
+    if (isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs rounded-br-2xl";
+    }
+  } else {
+    if (!isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs";
+    }
+    if (!isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tl-2xl rounded-bl-xs";
+    }
+    if (isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs rounded-bl-xs";
+    }
+    if (isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs rounded-bl-2xl";
+    }
+  }
+  return isMe ? "rounded-2xl rounded-tr-xs" : "rounded-2xl rounded-tl-xs";
 }
 
-export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
+interface TicketDetailProps {
+  ticketId: string;
+  initialRole?: string;
+}
+
+export function TicketDetailConversation({ ticketId, initialRole }: TicketDetailProps) {
   const [ticket, setTicket] = useState<any | null>(null);
   const [comments, setComments] = useState<any[]>([]);
+  const [ticketReads, setTicketReads] = useState<{ user_id: string; last_read_at: string; user?: any }[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [currentUserName, setCurrentUserName] = useState<string>("User");
-  const [currentUserRole, setCurrentUserRole] = useState<string>("CLIENT");
+  const [currentUserRole, setCurrentUserRole] = useState<string>(initialRole || "CLIENT");
+
+  const getBackHref = () => {
+    switch (currentUserRole?.toUpperCase()) {
+      case "PM":
+        return "/pm-workplace?tab=tickets";
+      case "DEV":
+        return "/dev-workplace?tab=tickets";
+      case "CLIENT":
+      case "ADMIN":
+      default:
+        return "/tickets";
+    }
+  };
   const [isStaff, setIsStaff] = useState<boolean>(false);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [chatAttachments, setChatAttachments] = useState<any[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
+  const lastPasteTimeRef = useRef(0);
   const [, setTimeTick] = useState(0);
 
   // Typing indicator state
@@ -100,6 +162,16 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
       }, 2500);
     }
   };
+
+  // Deduplicate comments by id so no duplicates can ever appear in the UI
+  const displayComments = useMemo(() => {
+    const seen = new Set<string>();
+    return comments.filter((c) => {
+      if (!c?.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [comments]);
 
   // Client Report Modal state
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
@@ -273,6 +345,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
       const json = await res.json();
       setTicket(json.ticket);
       setComments(json.comments || []);
+      if (json.reads) setTicketReads(json.reads);
       setHasMore(Boolean(json.hasMore));
       setTotalCount(json.totalCount ?? (json.comments?.length || 0));
       setCurrentUserId(json.currentUserId);
@@ -355,6 +428,9 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
           return [...prev, ...newOnes];
         });
       }
+      if (json.reads) {
+        setTicketReads(json.reads);
+      }
       if (json.totalCount !== undefined) {
         setTotalCount(json.totalCount);
       }
@@ -376,8 +452,31 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     }
   };
 
+  const markTicketAsRead = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/read`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.last_read_at && currentUserId) {
+          channelRef.current?.send({
+            type: "broadcast",
+            event: "ticket_read",
+            payload: {
+              ticket_id: ticketId,
+              user_id: currentUserId,
+              last_read_at: data.last_read_at,
+            },
+          });
+        }
+      }
+    } catch {
+      // background error ignore
+    }
+  }, [ticketId, currentUserId]);
+
   useEffect(() => {
     loadTicketAndComments();
+    markTicketAsRead();
 
     const supabase = createClient();
 
@@ -432,6 +531,22 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
 
           setComments((prev) => {
             if (prev.some((c) => c.id === payload.comment.id)) return prev;
+
+            // If this comment belongs to current user and an optimistic temp comment exists, replace it
+            if (currentUserId && payload.comment.user_id === currentUserId) {
+              const hasTemp = prev.some((c) => c.id.startsWith("temp-") && c.user_id === currentUserId);
+              if (hasTemp) {
+                let replaced = false;
+                return prev.map((c) => {
+                  if (!replaced && c.id.startsWith("temp-") && c.user_id === currentUserId) {
+                    replaced = true;
+                    return payload.comment;
+                  }
+                  return c;
+                });
+              }
+            }
+
             return [...prev, payload.comment];
           });
           setTotalCount((c) => (c !== null ? c + 1 : 1));
@@ -466,6 +581,19 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
           );
         }
       })
+      .on("broadcast", { event: "ticket_read" }, ({ payload }) => {
+        if (payload?.user_id && payload?.last_read_at) {
+          setTicketReads((prev) => {
+            const existingIdx = prev.findIndex((r) => r.user_id === payload.user_id);
+            if (existingIdx >= 0) {
+              const next = [...prev];
+              next[existingIdx] = { ...next[existingIdx], last_read_at: payload.last_read_at };
+              return next;
+            }
+            return [...prev, { user_id: payload.user_id, last_read_at: payload.last_read_at }];
+          });
+        }
+      })
       .on(
         "postgres_changes",
         {
@@ -487,6 +615,22 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
 
             setComments((prev) => {
               if (prev.some((c) => c.id === newCommentData.id)) return prev;
+
+              // If this comment belongs to current user and an optimistic temp comment exists, replace it
+              if (currentUserId && newCommentData.user_id === currentUserId) {
+                const hasTemp = prev.some((c) => c.id.startsWith("temp-") && c.user_id === currentUserId);
+                if (hasTemp) {
+                  let replaced = false;
+                  return prev.map((c) => {
+                    if (!replaced && c.id.startsWith("temp-") && c.user_id === currentUserId) {
+                      replaced = true;
+                      return newCommentData;
+                    }
+                    return c;
+                  });
+                }
+              }
+
               return [...prev, newCommentData];
             });
             setTotalCount((c) => (c !== null ? c + 1 : 1));
@@ -551,6 +695,28 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
           silentSyncComments();
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "ticket_reads",
+          filter: `ticket_id=eq.${ticketId}`,
+        },
+        (payload) => {
+          if (payload.new) {
+            setTicketReads((prev) => {
+              const existingIdx = prev.findIndex((r) => r.user_id === (payload.new as any).user_id);
+              if (existingIdx >= 0) {
+                const next = [...prev];
+                next[existingIdx] = { ...next[existingIdx], ...(payload.new as any) };
+                return next;
+              }
+              return [...prev, payload.new as any];
+            });
+          }
+        }
+      )
       .subscribe();
 
     channelRef.current = channel;
@@ -558,6 +724,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     // Refresh once only if the user returns to this browser tab
     const handleFocus = () => {
       silentSyncComments();
+      markTicketAsRead();
     };
     window.addEventListener("focus", handleFocus);
 
@@ -583,8 +750,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     }
   }, [loading]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
     setUploading(true);
@@ -626,6 +792,90 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      uploadFiles(e.target.files);
+    }
+  };
+
+  // Clipboard Paste (Ctrl + V)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    // Debounce to prevent multiple trigger events
+    const now = Date.now();
+    if (now - lastPasteTimeRef.current < 500) {
+      return;
+    }
+
+    const rawFiles = e.clipboardData?.files;
+    let pastedFiles: File[] = [];
+
+    if (rawFiles && rawFiles.length > 0) {
+      pastedFiles = Array.from(rawFiles);
+    } else if (e.clipboardData?.items) {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) {
+            pastedFiles.push(file);
+          }
+        }
+      }
+    }
+
+    // Deduplicate any duplicate descriptors by name and size
+    const uniqueFiles = pastedFiles.filter(
+      (file, index, self) =>
+        index === self.findIndex((f) => f.name === file.name && f.size === file.size)
+    );
+
+    if (uniqueFiles.length > 0) {
+      lastPasteTimeRef.current = now;
+      e.preventDefault();
+      e.stopPropagation();
+      uploadFiles(uniqueFiles);
+    }
+  };
+
+  // Drag and Drop
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      uploadFiles(e.dataTransfer.files);
     }
   };
 
@@ -765,9 +1015,13 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
       const json = await res.json().catch(() => null);
       if (json?.comment) {
         // Replace optimistic comment with persisted record
-        setComments((prev) =>
-          prev.map((c) => (c.id === tempId ? json.comment : c))
-        );
+        setComments((prev) => {
+          const alreadyHasReal = prev.some((c) => c.id === json.comment.id);
+          if (alreadyHasReal) {
+            return prev.filter((c) => c.id !== tempId);
+          }
+          return prev.map((c) => (c.id === tempId ? json.comment : c));
+        });
 
         // Broadcast to other open browser tabs / clients in real-time
         try {
@@ -847,7 +1101,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
     return (
       <div className="p-8 text-center space-y-4">
         <p className="text-sm text-muted-foreground">Ticket could not be found.</p>
-        <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/tickets" />}>
+        <Button variant="outline" size="sm" nativeButton={false} render={<Link href={getBackHref()} />}>
           <ArrowLeft className="size-3.5 mr-1" /> Back to Tickets
         </Button>
       </div>
@@ -864,7 +1118,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
             size="sm"
             className="h-8 px-2.5 text-xs shrink-0"
             nativeButton={false}
-            render={<Link href="/tickets" />}
+            render={<Link href={getBackHref()} />}
           >
             <ArrowLeft className="size-3.5 mr-1" /> Back
           </Button>
@@ -1029,7 +1283,29 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
 
         {/* Right Column: Live Conversation / Messaging */}
         <div className="lg:col-span-7 h-full min-h-0 flex flex-col">
-          <Card className="border-border shadow-xs h-full flex flex-col min-h-0 overflow-hidden">
+          <Card
+            className="relative border-border shadow-xs h-full flex flex-col min-h-0 overflow-hidden"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onPaste={handlePaste}
+          >
+            {/* Drag and Drop Visual Overlay */}
+            {isDragging && (
+              <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/85 backdrop-blur-xs border-2 border-dashed border-primary rounded-xl pointer-events-none transition-all animate-in fade-in-0 duration-150">
+                <div className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-card/90 border border-primary/30 shadow-xl text-center">
+                  <div className="p-3.5 rounded-full bg-primary/10 text-primary border border-primary/20 shadow-xs animate-bounce">
+                    <Upload className="size-8" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Drop files here to upload</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Images, PDFs, documents, screenshots</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <CardHeader className="pb-3 border-b border-border/70 shrink-0 flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -1059,7 +1335,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                   </Button>
                 )}
                 <Badge variant="outline" className="text-[10px]">
-                  {totalCount !== null ? `${totalCount} Messages` : `${comments.length} Messages`}
+                  {totalCount !== null ? `${totalCount} Messages` : `${displayComments.length} Messages`}
                 </Badge>
               </div>
             </CardHeader>
@@ -1068,7 +1344,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
             <CardContent
               ref={scrollContainerRef}
               onScroll={handleScroll}
-              className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0"
+              className="flex-1 overflow-y-auto p-4 min-h-0"
             >
               {/* Top Infinite Scroll Loader & Indicator */}
               {loadingMore && (
@@ -1089,71 +1365,125 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                 </div>
               )}
 
-              {comments.length === 0 ? (
+              {displayComments.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground p-8">
                   <MessageSquare className="size-8 mb-2 opacity-30" />
                   <p className="text-sm">No messages yet in this ticket.</p>
                   <p className="text-xs mt-1">Start the conversation by sending a question or update below.</p>
                 </div>
               ) : (
-                comments.map((c) => {
+                displayComments.map((c, index) => {
                   const isMe = c.user_id === currentUserId;
+                  const isLastMessage = index === displayComments.length - 1;
                   const authorRole = c.author?.role || "USER";
+                  const prevComment = index > 0 ? displayComments[index - 1] : null;
+                  const nextComment = index < displayComments.length - 1 ? displayComments[index + 1] : null;
+
+                  const isWithinClusterTime = (t1: string, t2: string) => {
+                    try {
+                      return Math.abs(new Date(t1).getTime() - new Date(t2).getTime()) <= 2 * 60 * 1000;
+                    } catch {
+                      return false;
+                    }
+                  };
+
+                  const showDateHeader = !prevComment || formatMessageDate(prevComment.created_at) !== formatMessageDate(c.created_at);
+                  const nextShowDateHeader = Boolean(nextComment && formatMessageDate(nextComment.created_at) !== formatMessageDate(c.created_at));
+
+                  const isSameAsPrev = Boolean(
+                    !showDateHeader &&
+                    prevComment &&
+                    prevComment.user_id === c.user_id &&
+                    Boolean(prevComment.is_internal) === Boolean(c.is_internal) &&
+                    isWithinClusterTime(prevComment.created_at, c.created_at)
+                  );
+
+                  const isSameAsNext = Boolean(
+                    !nextShowDateHeader &&
+                    nextComment &&
+                    nextComment.user_id === c.user_id &&
+                    Boolean(nextComment.is_internal) === Boolean(c.is_internal) &&
+                    isWithinClusterTime(nextComment.created_at, c.created_at)
+                  );
 
                   return (
-                    <div
-                      key={c.id}
-                      id={`comment-${c.id}`}
-                      className={`group relative flex gap-3 transition-colors rounded-xl p-1 ${
-                        isMe ? "flex-row-reverse" : "flex-row"
-                      } ${highlightedCommentId === c.id ? "bg-primary/10 ring-2 ring-primary ring-offset-2 transition-all duration-300" : ""}`}
-                    >
-                      <Avatar className="size-8 shrink-0">
-                        <AvatarFallback className="text-[10px] font-bold bg-muted">
-                          {c.author?.full_name?.slice(0, 2).toUpperCase() || "US"}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      <div className={`max-w-[80%] space-y-1 ${isMe ? "items-end text-right" : ""}`}>
-                        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                          <span className="font-semibold text-foreground">
-                            {c.author?.full_name || "User"}
-                          </span>
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 uppercase">
-                            {authorRole}
-                          </Badge>
-                          {c.is_internal && (
-                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10 flex items-center gap-1">
-                              <Lock className="size-2.5" />
-                              Staff Only
-                            </Badge>
-                          )}
-                          {c.is_edited && (
-                            <span className="text-[10px] text-muted-foreground/80 dark:text-muted-foreground font-normal">
-                              &bull; Edited
-                            </span>
-                          )}
-                          <span>&bull;</span>
-                          <span
-                            className="cursor-default hover:text-foreground transition-colors inline-flex items-center gap-1"
-                            title={new Date(c.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
-                          >
-                            <span>{new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                            <span className="text-[10px] text-muted-foreground/80 font-normal">
-                              ({getRelativeTime(c.created_at)})
-                            </span>
+                    <div key={c.id} id={`comment-${c.id}`} className={cn(isSameAsPrev ? "mt-1" : "mt-3.5")}>
+                      {showDateHeader && (
+                        <div className="flex items-center justify-center my-3">
+                          <span className="text-[11px] font-medium text-muted-foreground bg-muted/50 border border-border/60 px-3 py-0.5 rounded-full shadow-2xs">
+                            {formatMessageDate(c.created_at)}
                           </span>
                         </div>
+                      )}
 
-                        {/* Message Bubble + Reaction Trigger Container */}
-                        <div className={`relative flex items-center gap-1.5 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
-                          <div
-                            className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap text-left ${
-                              isMe
-                                ? "bg-primary text-primary-foreground rounded-tr-xs"
-                                : "bg-muted/60 text-foreground rounded-tl-xs border border-border/60"
-                            }`}
-                          >
+                      <div
+                        className={cn(
+                          "group relative flex gap-2.5 transition-colors rounded-xl p-0.5",
+                          isMe ? "flex-row-reverse" : "flex-row",
+                          highlightedCommentId === c.id && "bg-primary/10 ring-2 ring-primary ring-offset-2 transition-all duration-300"
+                        )}
+                      >
+                        {/* User Avatar - only for other users on left */}
+                        {!isMe && (
+                          !isSameAsPrev ? (
+                            <Avatar className="size-8 rounded-full border border-border/60 shrink-0 mt-0.5 shadow-2xs">
+                              <AvatarFallback className="text-[10px] font-bold bg-muted">
+                                {c.author?.full_name?.slice(0, 2).toUpperCase() || "US"}
+                              </AvatarFallback>
+                            </Avatar>
+                          ) : (
+                            <div className="size-8 shrink-0" />
+                          )
+                        )}
+
+                        <div className={cn("flex flex-col max-w-[82%] sm:max-w-[70%]", isMe ? "items-end" : "items-start")}>
+                          {/* Sender Name & Role - only for !isMe on first message of cluster */}
+                          {!isMe && !isSameAsPrev && (
+                            <div className="flex items-center gap-1.5 mb-1 px-1 flex-row">
+                              <span className="text-xs font-semibold text-foreground">
+                                {c.author?.full_name || "User"}
+                              </span>
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 uppercase">
+                                {authorRole}
+                              </Badge>
+                              {c.is_internal && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10 flex items-center gap-1">
+                                  <Lock className="size-2.5" />
+                                  Staff Only
+                                </Badge>
+                              )}
+                              {c.is_edited && (
+                                <span className="text-[10px] text-muted-foreground/80 dark:text-muted-foreground font-normal">
+                                  &bull; Edited
+                                </span>
+                              )}
+                              <span className="text-[10px] text-muted-foreground ml-1">
+                                {format(new Date(c.created_at), "h:mm a")}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Staff Only indicator for isMe */}
+                          {isMe && c.is_internal && !isSameAsPrev && (
+                            <div className="flex items-center gap-1 mb-1 px-1 justify-end">
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10 flex items-center gap-1">
+                                <Lock className="size-2.5" />
+                                Staff Only
+                              </Badge>
+                            </div>
+                          )}
+
+                          {/* Message Bubble + Reaction Trigger Container */}
+                          <div className={cn("relative flex items-center gap-1.5", isMe ? "flex-row-reverse" : "flex-row")}>
+                            <div
+                              className={cn(
+                                "p-3 text-xs leading-relaxed whitespace-pre-wrap text-left shadow-2xs",
+                                isMe
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted/60 text-foreground border border-border/60",
+                                getBubbleRadius(isMe, isSameAsPrev, isSameAsNext)
+                              )}
+                            >
                             {/* Replied Reference Card */}
                             {c.reply_to && (
                               <div
@@ -1274,7 +1604,7 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
 
                         {/* Reactions Badge below the message */}
                         {c.reactions && c.reactions.length > 0 && (
-                          <div className={`flex pt-0.5 ${isMe ? "justify-end" : "justify-start"}`}>
+                          <div className={cn("flex flex-wrap gap-1 mt-1", isMe ? "justify-end" : "justify-start")}>
                             <MessageReactionsBadge
                               commentId={c.id}
                               reactions={c.reactions}
@@ -1284,9 +1614,53 @@ export function TicketDetailConversation({ ticketId }: TicketDetailProps) {
                             />
                           </div>
                         )}
+
+                        {/* Timestamp & Status (Delivered / Seen) - only at the bottom of the cluster */}
+                        {!isSameAsNext && (
+                          <div
+                            className={cn(
+                              "text-[10px] text-muted-foreground/80 mt-1 px-1 select-none flex items-center gap-1.5",
+                              isMe ? "justify-end" : "justify-start"
+                            )}
+                            title={format(new Date(c.created_at), "PPpp")}
+                          >
+                            {c.is_edited && <span>Edited &bull;</span>}
+                            <span>{isMe ? `Sent ${getRelativeTime(c.created_at)}` : getRelativeTime(c.created_at)}</span>
+
+                            {/* Delivered / Seen for last sent message by me */}
+                            {isMe && isLastMessage && (
+                              <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground ml-1">
+                                &bull;
+                                {(() => {
+                                  // Check if any other user has read after this message was created
+                                  const messageTime = new Date(c.created_at).getTime();
+                                  const otherReads = ticketReads.filter((r) => {
+                                    if (r.user_id === currentUserId) return false;
+                                    const readTime = new Date(r.last_read_at).getTime();
+                                    return !isNaN(readTime) && readTime >= messageTime - 1000;
+                                  });
+
+                                  if (otherReads.length > 0) {
+                                    return (
+                                      <span className="text-primary font-semibold">
+                                        Seen
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span className="text-muted-foreground">
+                                      Delivered
+                                    </span>
+                                  );
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  );
+                  </div>
+                );
                 })
               )}
             </CardContent>

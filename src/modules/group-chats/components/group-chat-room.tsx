@@ -24,6 +24,8 @@ import {
   Trash2,
   Reply,
   Pencil,
+  Upload,
+  AtSign,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -129,6 +131,37 @@ function getRelativeTime(dateStr: string) {
   }
 }
 
+function getBubbleRadius(isMe: boolean, isSameAsPrev: boolean, isSameAsNext: boolean) {
+  if (isMe) {
+    if (!isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs";
+    }
+    if (!isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tr-2xl rounded-br-xs";
+    }
+    if (isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs rounded-br-xs";
+    }
+    if (isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tr-xs rounded-br-2xl";
+    }
+  } else {
+    if (!isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs";
+    }
+    if (!isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tl-2xl rounded-bl-xs";
+    }
+    if (isSameAsPrev && isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs rounded-bl-xs";
+    }
+    if (isSameAsPrev && !isSameAsNext) {
+      return "rounded-2xl rounded-tl-xs rounded-bl-2xl";
+    }
+  }
+  return isMe ? "rounded-2xl rounded-tr-xs" : "rounded-2xl rounded-tl-xs";
+}
+
 export function GroupChatRoom({
   chatType,
   title,
@@ -138,10 +171,15 @@ export function GroupChatRoom({
 }: GroupChatRoomProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pinnedMessages, setPinnedMessages] = useState<ChatMessage[]>([]);
+  const [chatReads, setChatReads] = useState<{ user_id: string; last_read_at: string; user?: any }[]>([]);
+  const [chatMembers, setChatMembers] = useState<{ id: string; full_name: string; avatar_url?: string; role: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
+  const lastPasteTimeRef = useRef(0);
   const [isEnabled, setIsEnabled] = useState(true);
   const [userRole, setUserRole] = useState("CLIENT");
   const [currentUser, setCurrentUser] = useState<{ id: string; name: string; role: string; avatar_url?: string } | null>(null);
@@ -168,6 +206,11 @@ export function GroupChatRoom({
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 
+  // Mention autocomplete state
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   // Typing state
   const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string; role: string }[]>([]);
   const typingTimeoutsRef = useRef<{ [userId: string]: NodeJS.Timeout }>({});
@@ -178,6 +221,11 @@ export function GroupChatRoom({
   const channelRef = useRef<any>(null);
   const isSendingRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>(messages);
+  const currentUserRef = useRef(currentUser);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -203,14 +251,137 @@ export function GroupChatRoom({
     }
   }, []);
 
+  // Deduplicate messages by id so no duplicates can ever appear in the UI
+  const displayMessages = useMemo(() => {
+    const seen = new Set<string>();
+    return messages.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [messages]);
+
+  // Map of last seen message per user (Messenger style)
+  const seenUsersByMessageId = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; avatar?: string }[]>();
+    if (!currentUser || chatReads.length === 0 || displayMessages.length === 0) return map;
+
+    // Filter reads for other users
+    const otherReads = chatReads.filter((r) => r.user_id !== currentUser.id && r.last_read_at);
+
+    otherReads.forEach((read) => {
+      const readTime = new Date(read.last_read_at).getTime();
+
+      // Find the latest message that this user read
+      let lastSeenMsgId: string | null = null;
+      for (let i = displayMessages.length - 1; i >= 0; i--) {
+        const msg = displayMessages[i];
+        const msgTime = new Date(msg.created_at).getTime();
+        // Allow 1 second clock skew
+        if (readTime >= msgTime - 1000) {
+          lastSeenMsgId = msg.id;
+          break;
+        }
+      }
+
+      if (lastSeenMsgId) {
+        if (!map.has(lastSeenMsgId)) {
+          map.set(lastSeenMsgId, []);
+        }
+        map.get(lastSeenMsgId)!.push({
+          id: read.user_id,
+          name: read.user?.full_name || "Team Member",
+          avatar: read.user?.avatar_url,
+        });
+      }
+    });
+
+    return map;
+  }, [chatReads, displayMessages, currentUser]);
+
+  // Filter eligible members for @mention dropdown
+  const filteredMentionOptions = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+
+    const options: { id: string; label: string; sublabel: string; isEveryone?: boolean; avatar_url?: string }[] = [];
+
+    // Add @everyone option
+    if ("everyone".includes(q) || "all".includes(q)) {
+      options.push({
+        id: "everyone",
+        label: "everyone",
+        sublabel: "Notify everyone in this chat",
+        isEveryone: true,
+      });
+    }
+
+    // Add chat members (excluding current user)
+    chatMembers
+      .filter((m) => m.id !== currentUser?.id && (m.full_name?.toLowerCase().includes(q) || !q))
+      .forEach((m) => {
+        options.push({
+          id: m.id,
+          label: m.full_name,
+          sublabel: m.role,
+          avatar_url: m.avatar_url,
+        });
+      });
+
+    return options;
+  }, [mentionQuery, chatMembers, currentUser]);
+
+  const insertMention = (name: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const cursor = textarea.selectionStart ?? inputText.length;
+    const textBefore = inputText.slice(0, cursor);
+    const textAfter = inputText.slice(cursor);
+
+    // Find the last '@' before cursor
+    const atIndex = textBefore.lastIndexOf("@");
+    if (atIndex >= 0) {
+      const updated = textBefore.slice(0, atIndex) + `@${name} ` + textAfter;
+      setInputText(updated);
+      setMentionQuery(null);
+      setTimeout(() => {
+        textarea.focus();
+        const nextPos = atIndex + name.length + 2;
+        textarea.setSelectionRange(nextPos, nextPos);
+      }, 0);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInputText(val);
+
+    const cursor = e.target.selectionStart ?? val.length;
+    const textBefore = val.slice(0, cursor);
+
+    // Look for an open '@' query: '@' preceded by start of string or whitespace, followed by non-spaces
+    const match = textBefore.match(/(?:^|\s)@([a-zA-Z0-9_\s]*)$/);
+    if (match) {
+      const query = match[1];
+      // If query has more than 2 words, close mention
+      if (query.split(" ").length <= 3) {
+        setMentionQuery(query);
+        setMentionIndex(0);
+        return;
+      }
+    }
+    setMentionQuery(null);
+  };
+
   // Filter matched messages for search
   const matchedMessageIds = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
-    return messages
+    return displayMessages
       .filter((m) => m.message.toLowerCase().includes(q))
       .map((m) => m.id);
-  }, [messages, searchQuery]);
+  }, [displayMessages, searchQuery]);
 
   const handleNextSearchMatch = () => {
     if (matchedMessageIds.length === 0) return;
@@ -243,6 +414,8 @@ export function GroupChatRoom({
       setUserRole(data.userRole);
       setCurrentUser(data.currentUser);
       setMessages(data.messages || []);
+      if (data.reads) setChatReads(data.reads);
+      if (data.members) setChatMembers(data.members);
       setHasMore(Boolean(data.hasMore));
       setPinnedMessages(data.pinnedMessages || []);
 
@@ -349,7 +522,7 @@ export function GroupChatRoom({
 
     channel
       .on("broadcast", { event: "typing" }, ({ payload }) => {
-        if (!payload || payload.userId === currentUser?.id) return;
+        if (!payload || payload.userId === currentUserRef.current?.id) return;
         const { userId, userName, role, isTyping } = payload;
 
         if (typingTimeoutsRef.current[userId]) {
@@ -375,6 +548,23 @@ export function GroupChatRoom({
         if (payload?.message) {
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.message.id)) return prev;
+
+            // If this message belongs to current user and an optimistic temp message exists, replace it
+            const myId = currentUserRef.current?.id;
+            if (myId && payload.message.user_id === myId) {
+              const hasTemp = prev.some((m) => m.id.startsWith("temp-") && m.user_id === myId);
+              if (hasTemp) {
+                let replaced = false;
+                return prev.map((m) => {
+                  if (!replaced && m.id.startsWith("temp-") && m.user_id === myId) {
+                    replaced = true;
+                    return payload.message;
+                  }
+                  return m;
+                });
+              }
+            }
+
             return [...prev, payload.message];
           });
           setTimeout(() => scrollToBottom("smooth"), 80);
@@ -509,20 +699,68 @@ export function GroupChatRoom({
           }
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "group_chat_reads",
+          filter: `chat_type=eq.${chatType}`,
+        },
+        async (payload) => {
+          if (payload.new) {
+            const newRead = payload.new as any;
+            let userInfo = null;
+            try {
+              const { data: p } = await supabase
+                .from("profiles")
+                .select("id, full_name, avatar_url, role")
+                .eq("id", newRead.user_id)
+                .single();
+              userInfo = p;
+            } catch {
+              // ignore
+            }
+            setChatReads((prev) => {
+              const existingIdx = prev.findIndex((r) => r.user_id === newRead.user_id);
+              if (existingIdx >= 0) {
+                const next = [...prev];
+                next[existingIdx] = {
+                  ...next[existingIdx],
+                  ...newRead,
+                  user: userInfo || next[existingIdx].user,
+                };
+                return next;
+              }
+              return [...prev, { ...newRead, user: userInfo }];
+            });
+          }
+        }
+      )
       .subscribe();
 
     channelRef.current = channel;
 
+    const handleFocus = () => {
+      fetch("/api/group-chats/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatType }),
+      }).catch(() => {});
+    };
+    window.addEventListener("focus", handleFocus);
+
     return () => {
+      window.removeEventListener("focus", handleFocus);
       channel.unsubscribe();
       channelRef.current = null;
     };
-  }, [chatType, currentUser?.id, scrollToBottom, userRole]);
+  }, [chatType, scrollToBottom, userRole]);
 
-  // File Upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  // File Upload & Staging
+  const uploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
+    if (!isEnabled && userRole !== "ADMIN") return;
 
     setUploading(true);
     const supabase = createClient();
@@ -563,6 +801,95 @@ export function GroupChatRoom({
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      uploadFiles(e.target.files);
+    }
+  };
+
+  // Clipboard Paste (Ctrl + V)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (!isEnabled && userRole !== "ADMIN") return;
+
+    // Debounce to prevent multiple trigger events
+    const now = Date.now();
+    if (now - lastPasteTimeRef.current < 500) {
+      return;
+    }
+
+    const rawFiles = e.clipboardData?.files;
+    let pastedFiles: File[] = [];
+
+    if (rawFiles && rawFiles.length > 0) {
+      pastedFiles = Array.from(rawFiles);
+    } else if (e.clipboardData?.items) {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) {
+            pastedFiles.push(file);
+          }
+        }
+      }
+    }
+
+    // Deduplicate any duplicate descriptors by name and size
+    const uniqueFiles = pastedFiles.filter(
+      (file, index, self) =>
+        index === self.findIndex((f) => f.name === file.name && f.size === file.size)
+    );
+
+    if (uniqueFiles.length > 0) {
+      lastPasteTimeRef.current = now;
+      e.preventDefault();
+      e.stopPropagation();
+      uploadFiles(uniqueFiles);
+    }
+  };
+
+  // Drag and Drop
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isEnabled && userRole !== "ADMIN") return;
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isEnabled && userRole !== "ADMIN") return;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (!isEnabled && userRole !== "ADMIN") return;
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      uploadFiles(e.dataTransfer.files);
     }
   };
 
@@ -690,9 +1017,13 @@ export function GroupChatRoom({
 
       if (json.message) {
         // Smoothly replace optimistic message with persisted message
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? json.message : m))
-        );
+        setMessages((prev) => {
+          const alreadyHasReal = prev.some((m) => m.id === json.message.id);
+          if (alreadyHasReal) {
+            return prev.filter((m) => m.id !== tempId);
+          }
+          return prev.map((m) => (m.id === tempId ? json.message : m));
+        });
 
         channelRef.current?.send({
           type: "broadcast",
@@ -717,6 +1048,33 @@ export function GroupChatRoom({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // If mention suggestions popup is open, handle navigation keys
+    if (mentionQuery !== null && filteredMentionOptions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev + 1) % filteredMentionOptions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev - 1 + filteredMentionOptions.length) % filteredMentionOptions.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const selected = filteredMentionOptions[mentionIndex] || filteredMentionOptions[0];
+        if (selected) {
+          insertMention(selected.label);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -1174,10 +1532,32 @@ export function GroupChatRoom({
       )}
 
       {/* Chat Messages Card */}
-      <Card className="flex-1 flex flex-col min-h-0 rounded-2xl border-border/70 overflow-hidden shadow-xs bg-card/95">
+      <Card
+        className="relative flex-1 flex flex-col min-h-0 rounded-2xl border-border/70 overflow-hidden shadow-xs bg-card/95"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onPaste={handlePaste}
+      >
+        {/* Drag and Drop Visual Overlay */}
+        {isDragging && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/85 backdrop-blur-xs border-2 border-dashed border-primary rounded-2xl pointer-events-none transition-all animate-in fade-in-0 duration-150">
+            <div className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-card/90 border border-primary/30 shadow-xl text-center">
+              <div className="p-3.5 rounded-full bg-primary/10 text-primary border border-primary/20 shadow-xs animate-bounce">
+                <Upload className="size-8" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Drop files here to upload</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Images, PDFs, documents, screenshots</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <CardContent
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 min-h-0"
+          className="flex-1 overflow-y-auto p-3 sm:p-4 min-h-0"
         >
           {/* History Loading Button */}
           {hasMore && (
@@ -1215,15 +1595,44 @@ export function GroupChatRoom({
               </p>
             </div>
           ) : (
-            messages.map((msg, index) => {
+            displayMessages.map((msg, index) => {
               const isMe = msg.user_id === currentUser?.id;
-              const prevMsg = index > 0 ? messages[index - 1] : null;
+              const prevMsg = index > 0 ? displayMessages[index - 1] : null;
+              const nextMsg = index < displayMessages.length - 1 ? displayMessages[index + 1] : null;
+
+              const isWithinClusterTime = (t1: string, t2: string) => {
+                try {
+                  return Math.abs(new Date(t1).getTime() - new Date(t2).getTime()) <= 2 * 60 * 1000;
+                } catch {
+                  return false;
+                }
+              };
+
               const showDateHeader = !prevMsg || formatMessageDate(prevMsg.created_at) !== formatMessageDate(msg.created_at);
-              const showAvatar = !prevMsg || prevMsg.user_id !== msg.user_id || showDateHeader;
+              const nextShowDateHeader = Boolean(nextMsg && formatMessageDate(nextMsg.created_at) !== formatMessageDate(msg.created_at));
+
+              const isSameAsPrev = Boolean(
+                !showDateHeader &&
+                prevMsg &&
+                prevMsg.user_id === msg.user_id &&
+                !prevMsg.is_deleted &&
+                !msg.is_deleted &&
+                isWithinClusterTime(prevMsg.created_at, msg.created_at)
+              );
+
+              const isSameAsNext = Boolean(
+                !nextShowDateHeader &&
+                nextMsg &&
+                nextMsg.user_id === msg.user_id &&
+                !nextMsg.is_deleted &&
+                !msg.is_deleted &&
+                isWithinClusterTime(nextMsg.created_at, msg.created_at)
+              );
+
               const isHighlighted = highlightedMessageId === msg.id || (matchedMessageIds.length > 0 && matchedMessageIds[currentMatchIndex] === msg.id);
 
               return (
-                <div key={msg.id} id={`msg-${msg.id}`} className="space-y-3">
+                <div key={msg.id} id={`msg-${msg.id}`} className={cn(isSameAsPrev ? "mt-1" : "mt-3.5")}>
                   {showDateHeader && (
                     <div className="flex items-center justify-center my-3">
                       <span className="text-[11px] font-medium text-muted-foreground bg-muted/50 border border-border/60 px-3 py-0.5 rounded-full shadow-2xs">
@@ -1234,29 +1643,31 @@ export function GroupChatRoom({
 
                   <div
                     className={cn(
-                      "flex gap-2.5 group relative items-start transition-colors rounded-xl p-1",
+                      "flex gap-2.5 group relative items-start transition-colors rounded-xl p-0.5",
                       isMe ? "flex-row-reverse" : "flex-row",
                       isHighlighted && "bg-primary/10 ring-2 ring-primary ring-offset-2 transition-all duration-300"
                     )}
                   >
-                    {/* User Avatar */}
-                    {showAvatar ? (
-                      <Avatar className="size-8 rounded-full border border-border/60 shrink-0 mt-0.5 shadow-2xs">
-                        {msg.sender?.avatar_url && (
-                          <AvatarImage src={msg.sender.avatar_url} alt={msg.sender.full_name} />
-                        )}
-                        <AvatarFallback className="text-[11px] bg-primary/10 text-primary font-bold">
-                          {msg.sender?.full_name?.charAt(0).toUpperCase() || "U"}
-                        </AvatarFallback>
-                      </Avatar>
-                    ) : (
-                      <div className="size-8 shrink-0" />
+                    {/* User Avatar - only for !isMe on left */}
+                    {!isMe && (
+                      !isSameAsPrev ? (
+                        <Avatar className="size-8 rounded-full border border-border/60 shrink-0 mt-0.5 shadow-2xs">
+                          {msg.sender?.avatar_url && (
+                            <AvatarImage src={msg.sender.avatar_url} alt={msg.sender.full_name} />
+                          )}
+                          <AvatarFallback className="text-[11px] bg-primary/10 text-primary font-bold">
+                            {msg.sender?.full_name?.charAt(0).toUpperCase() || "U"}
+                          </AvatarFallback>
+                        </Avatar>
+                      ) : (
+                        <div className="size-8 shrink-0" />
+                      )
                     )}
 
                     <div className={cn("flex flex-col max-w-[82%] sm:max-w-[70%]", isMe ? "items-end" : "items-start")}>
-                      {/* Sender Name & Role */}
-                      {showAvatar && (
-                        <div className={cn("flex items-center gap-1.5 mb-1 px-1", isMe ? "flex-row-reverse" : "flex-row")}>
+                      {/* Sender Name & Role - only for !isMe on first message of cluster */}
+                      {!isMe && !isSameAsPrev && (
+                        <div className="flex items-center gap-1.5 mb-1 px-1 flex-row">
                           <span className="text-xs font-semibold text-foreground">
                             {msg.sender?.full_name || "Team Member"}
                           </span>
@@ -1364,10 +1775,11 @@ export function GroupChatRoom({
                           /* Normal active message bubble */
                           <div
                             className={cn(
-                              "rounded-2xl px-3.5 py-2.5 text-xs shadow-2xs leading-relaxed break-words",
+                              "px-3.5 py-2.5 text-xs shadow-2xs leading-relaxed break-words",
                               isMe
-                                ? "bg-primary text-primary-foreground rounded-tr-xs"
-                                : "bg-muted/80 text-foreground border border-border/60 rounded-tl-xs",
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted/80 text-foreground border border-border/60",
+                              getBubbleRadius(isMe, isSameAsPrev, isSameAsNext),
                               msg.is_pinned && "border-2 border-amber-500/40"
                             )}
                           >
@@ -1394,7 +1806,28 @@ export function GroupChatRoom({
 
                             {msg.message && (
                               <p className="whitespace-pre-wrap select-text font-normal">
-                                {msg.message}
+                                {(() => {
+                                  // Highlight @everyone and @mentions
+                                  const parts = msg.message.split(/(@(?:everyone|all|[A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+)?)\b)/gi);
+                                  return parts.map((part, pIdx) => {
+                                    if (part.startsWith("@")) {
+                                      return (
+                                        <span
+                                          key={pIdx}
+                                          className={cn(
+                                            "font-semibold rounded px-1 py-0.2 mx-0.5",
+                                            isMe
+                                              ? "bg-primary-foreground/25 text-primary-foreground underline underline-offset-2"
+                                              : "bg-primary/15 text-primary dark:text-primary-foreground dark:bg-primary/30"
+                                          )}
+                                        >
+                                          {part}
+                                        </span>
+                                      );
+                                    }
+                                    return part;
+                                  });
+                                })()}
                               </p>
                             )}
 
@@ -1536,11 +1969,52 @@ export function GroupChatRoom({
                         </div>
                       )}
 
-                      {!showAvatar && (
-                        <div className="text-[10px] text-muted-foreground mt-0.5 px-1">
-                          <span>{getRelativeTime(msg.created_at)}</span>
+                      {!isSameAsNext && (
+                        <div
+                          className={cn(
+                            "text-[10px] text-muted-foreground/80 mt-1 px-1 select-none flex items-center gap-1",
+                            isMe ? "justify-end" : "justify-start"
+                          )}
+                          title={format(new Date(msg.created_at), "PPpp")}
+                        >
+                          {msg.is_edited && <span>Edited &bull;</span>}
+                          <span>{isMe ? `Sent ${getRelativeTime(msg.created_at)}` : getRelativeTime(msg.created_at)}</span>
                         </div>
                       )}
+
+                      {/* Messenger-style Seen Avatars */}
+                      {(() => {
+                        const seenUsers = seenUsersByMessageId.get(msg.id);
+                        if (!seenUsers || seenUsers.length === 0) return null;
+
+                        return (
+                          <div className={cn("flex items-center gap-1 mt-1 px-1", isMe ? "justify-end" : "justify-start")}>
+                            <div className="flex items-center -space-x-1.5 overflow-hidden py-0.5">
+                              {seenUsers.map((u) => {
+                                const initials = (u.name || "U")
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .toUpperCase()
+                                  .slice(0, 2);
+
+                                return (
+                                  <Avatar
+                                    key={u.id}
+                                    title={`Seen by ${u.name}`}
+                                    className="size-4 rounded-full border border-background shadow-2xs ring-1 ring-border/50 shrink-0"
+                                  >
+                                    <AvatarImage src={u.avatar} alt={u.name} />
+                                    <AvatarFallback className="text-[7px] font-bold bg-primary/20 text-primary">
+                                      {initials}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1661,12 +2135,57 @@ export function GroupChatRoom({
 
             {/* Redesigned Seamless Pill Input Container (No overlapping border) */}
             <div className="relative flex-1 flex items-center bg-background border border-border/80 rounded-full focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all px-3 py-0.5 min-w-0">
+              {/* @Mention Autocomplete Dropdown Popup */}
+              {mentionQuery !== null && filteredMentionOptions.length > 0 && (
+                <div className="absolute bottom-full left-0 mb-2 w-72 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover shadow-xl z-50 p-1 divide-y divide-border/40 animate-in fade-in-0 zoom-in-95">
+                  <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
+                    <AtSign className="size-3 text-primary" />
+                    <span>Members & Roles</span>
+                  </div>
+                  <div className="py-0.5">
+                    {filteredMentionOptions.map((opt, idx) => {
+                      const isSelected = idx === mentionIndex;
+                      return (
+                        <div
+                          key={opt.id}
+                          onClick={() => insertMention(opt.label)}
+                          className={cn(
+                            "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors",
+                            isSelected ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                          )}
+                        >
+                          {opt.isEveryone ? (
+                            <div className={cn("size-6 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0", isSelected ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary")}>
+                              @
+                            </div>
+                          ) : (
+                            <Avatar className="size-6 rounded-full shrink-0 border border-border/50">
+                              <AvatarImage src={opt.avatar_url} alt={opt.label} />
+                              <AvatarFallback className="text-[9px] font-bold">
+                                {opt.label.slice(0, 2).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+                          <div className="flex-1 min-w-0 text-left">
+                            <div className="font-semibold text-xs truncate">@{opt.label}</div>
+                            <div className={cn("text-[10px] truncate", isSelected ? "text-primary-foreground/80" : "text-muted-foreground")}>
+                              {opt.sublabel}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <Textarea
+                ref={textareaRef}
                 rows={1}
                 value={inputText}
                 disabled={!isEnabled && userRole !== "ADMIN"}
                 onChange={(e) => {
-                  setInputText(e.target.value);
+                  handleInputChange(e);
                   handleUserTyping();
                 }}
                 onKeyDown={handleKeyDown}
