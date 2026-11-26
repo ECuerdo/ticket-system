@@ -19,7 +19,6 @@ import {
   ShieldAlert,
   Trophy,
   Flame,
-  RefreshCw,
   MessageSquare,
 } from "lucide-react";
 import { useBranding } from "@/components/shared/branding-provider";
@@ -112,57 +111,22 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
   const currentTab = searchParams.get("tab");
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [pmOpen, setPmOpen] = useState(false);
-  const [devOpen, setDevOpen] = useState(false);
+  const isAdminRoute = pathname.startsWith("/admin-workplace");
+  const isPmRoute = pathname.startsWith("/pm-workplace");
+  const isDevRoute = pathname.startsWith("/dev-workplace");
 
-  // Optimistic Navigation State for instant feedback on click
-  const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
+  const [adminOpen, setAdminOpen] = useState(isAdminRoute);
+  const [pmOpen, setPmOpen] = useState(isPmRoute);
+  const [devOpen, setDevOpen] = useState(isDevRoute);
 
-  useEffect(() => {
-    // Clear optimistic highlight when actual navigation completes
-    setOptimisticHref(null);
-  }, [pathname, searchParams]);
+  const isItemActive = (href: string) => pathname === href;
 
-  const currentFullUrl = currentTab ? `${pathname}?tab=${currentTab}` : pathname;
-
-  const handleNavClick = (href: string) => {
-    setOptimisticHref(href);
-    if (href.startsWith("/pm-workplace")) setPmOpen(true);
-    if (href.startsWith("/dev-workplace")) setDevOpen(true);
-    if (href.startsWith("/admin-workplace")) setAdminOpen(true);
-  };
-
-  const isParentActive = (basePath: string) => {
-    if (optimisticHref) {
-      return optimisticHref.startsWith(basePath);
-    }
-    return pathname.startsWith(basePath);
-  };
-
-  const isItemActive = (href: string) => {
-    if (optimisticHref) {
-      return optimisticHref === href;
-    }
-    return pathname === href;
-  };
-
-  const isSubActive = (subHref: string, subTab: string, defaultTab: string, parentPath: string) => {
-    if (optimisticHref) {
-      return (
-        optimisticHref === subHref ||
-        (optimisticHref.startsWith(parentPath) && optimisticHref.includes(`tab=${subTab}`))
-      );
-    }
+  const isSubActive = (_subHref: string, subTab: string, defaultTab: string, parentPath: string) => {
     return (
       pathname.startsWith(parentPath) &&
       (currentTab === subTab || (!currentTab && subTab === defaultTab))
     );
   };
-
-  const isAdminRoute = isParentActive("/admin-workplace");
-  const isPmRoute = isParentActive("/pm-workplace");
-  const isDevRoute = isParentActive("/dev-workplace");
 
   const userRole = user.role || "CLIENT";
   const branding = useBranding();
@@ -489,7 +453,6 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
       <SidebarHeader className="border-b border-border/70 p-4">
         <Link
           href="/dashboard"
-          onClick={() => handleNavClick("/dashboard")}
           className="flex items-center gap-3"
         >
           <div
@@ -538,30 +501,19 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
             <SidebarMenu>
               {filteredItems.map((item) => {
                 const isActive = isItemActive(item.href);
-                const isNavigating = optimisticHref === item.href && pathname !== item.href;
                 const Icon = item.icon;
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
-                      render={
-                        <Link
-                          href={item.href}
-                          onClick={() => handleNavClick(item.href)}
-                        />
-                      }
+                      render={<Link href={item.href} />}
                       isActive={isActive}
-                      onClick={() => handleNavClick(item.href)}
                       className={
                         isActive
                           ? "bg-primary text-primary-foreground font-semibold rounded-xl shadow-md shadow-primary/20 hover:bg-primary hover:text-primary-foreground"
                           : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl"
                       }
                     >
-                      {isNavigating ? (
-                        <RefreshCw className="size-4 shrink-0 animate-spin text-primary-foreground" />
-                      ) : (
-                        <Icon className="size-4 shrink-0" />
-                      )}
+                      <Icon className="size-4 shrink-0" />
                       <span className="truncate text-sm">{item.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -599,19 +551,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                     <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
                       {pmSubItems.map((sub) => {
                         const isSubActiveItem = isSubActive(sub.href, sub.tab, "tickets", "/pm-workplace");
-                        const isNavigating = optimisticHref === sub.href && currentFullUrl !== sub.href;
                         const SubIcon = sub.icon;
                         return (
                           <SidebarMenuSubItem key={sub.tab}>
                             <SidebarMenuSubButton
-                              render={
-                                <Link
-                                  href={sub.href}
-                                  onClick={() => handleNavClick(sub.href)}
-                                />
-                              }
+                              render={<Link href={sub.href} />}
                               isActive={isSubActiveItem}
-                              onClick={() => handleNavClick(sub.href)}
                               size="sm"
                               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
                                 isSubActiveItem
@@ -619,11 +564,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                                   : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                               }`}
                             >
-                              {isNavigating ? (
-                                <RefreshCw className="size-3.5 shrink-0 animate-spin text-primary" />
-                              ) : (
-                                <SubIcon className="size-3.5 shrink-0" />
-                              )}
+                              <SubIcon className="size-3.5 shrink-0" />
                               <span className="truncate flex-1">{sub.title}</span>
                               {sub.tab === "tickets" && ticketBadgeCounts.pmTickets > 0 && (
                                 <span className="ml-auto flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-amber-500 text-white shadow-2xs dark:bg-amber-600">
@@ -670,19 +611,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                     <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
                       {devSubItems.map((sub) => {
                         const isSubActiveItem = isSubActive(sub.href, sub.tab, "tickets", "/dev-workplace");
-                        const isNavigating = optimisticHref === sub.href && currentFullUrl !== sub.href;
                         const SubIcon = sub.icon;
                         return (
                           <SidebarMenuSubItem key={sub.tab}>
                             <SidebarMenuSubButton
-                              render={
-                                <Link
-                                  href={sub.href}
-                                  onClick={() => handleNavClick(sub.href)}
-                                />
-                              }
+                              render={<Link href={sub.href} />}
                               isActive={isSubActiveItem}
-                              onClick={() => handleNavClick(sub.href)}
                               size="sm"
                               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
                                 isSubActiveItem
@@ -690,11 +624,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                                   : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                               }`}
                             >
-                              {isNavigating ? (
-                                <RefreshCw className="size-3.5 shrink-0 animate-spin text-primary" />
-                              ) : (
-                                <SubIcon className="size-3.5 shrink-0" />
-                              )}
+                              <SubIcon className="size-3.5 shrink-0" />
                               <span className="truncate flex-1">{sub.title}</span>
                               {sub.tab === "tickets" && ticketBadgeCounts.devTickets > 0 && (
                                 <span className="ml-auto flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full text-[10px] font-bold bg-purple-600 text-white shadow-2xs dark:bg-purple-500">
@@ -734,19 +664,12 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                     <SidebarMenuSub className="my-1 ml-4 border-l-2 border-primary/20 pl-2">
                       {adminSubItems.map((sub) => {
                         const isSubActiveItem = isSubActive(sub.href, sub.tab, "systems", "/admin-workplace");
-                        const isNavigating = optimisticHref === sub.href && currentFullUrl !== sub.href;
                         const SubIcon = sub.icon;
                         return (
                           <SidebarMenuSubItem key={sub.tab}>
                             <SidebarMenuSubButton
-                              render={
-                                <Link
-                                  href={sub.href}
-                                  onClick={() => handleNavClick(sub.href)}
-                                />
-                              }
+                              render={<Link href={sub.href} />}
                               isActive={isSubActiveItem}
-                              onClick={() => handleNavClick(sub.href)}
                               size="sm"
                               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors ${
                                 isSubActiveItem
@@ -754,11 +677,7 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
                                   : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                               }`}
                             >
-                              {isNavigating ? (
-                                <RefreshCw className="size-3.5 shrink-0 animate-spin text-primary" />
-                              ) : (
-                                <SubIcon className="size-3.5 shrink-0" />
-                              )}
+                              <SubIcon className="size-3.5 shrink-0" />
                               <span className="truncate">{sub.title}</span>
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
@@ -773,25 +692,15 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
               {showSettings && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    render={
-                      <Link
-                        href="/settings"
-                        onClick={() => handleNavClick("/settings")}
-                      />
-                    }
+                    render={<Link href="/settings" />}
                     isActive={isItemActive("/settings")}
-                    onClick={() => handleNavClick("/settings")}
                     className={
                       isItemActive("/settings")
                         ? "bg-primary text-primary-foreground font-semibold rounded-xl shadow-md shadow-primary/20 hover:bg-primary hover:text-primary-foreground"
                         : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl"
                     }
                   >
-                    {optimisticHref === "/settings" && pathname !== "/settings" ? (
-                      <RefreshCw className="size-4 shrink-0 animate-spin text-primary-foreground" />
-                    ) : (
-                      <Settings className="size-4 shrink-0" />
-                    )}
+                    <Settings className="size-4 shrink-0" />
                     <span className="truncate text-sm">Settings</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -810,30 +719,19 @@ export function AppSidebar({ user }: { user: HeaderUser }) {
               <SidebarMenu>
                 {filteredTeamChats.map((item) => {
                   const isActive = isItemActive(item.href);
-                  const isNavigating = optimisticHref === item.href && pathname !== item.href;
                   const Icon = item.icon;
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton
-                        render={
-                          <Link
-                            href={item.href}
-                            onClick={() => handleNavClick(item.href)}
-                          />
-                        }
+                        render={<Link href={item.href} />}
                         isActive={isActive}
-                        onClick={() => handleNavClick(item.href)}
                         className={
                           isActive
                             ? "bg-primary text-primary-foreground font-semibold rounded-xl shadow-md shadow-primary/20 hover:bg-primary hover:text-primary-foreground"
                             : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-xl"
                         }
                       >
-                        {isNavigating ? (
-                          <RefreshCw className="size-4 shrink-0 animate-spin text-primary-foreground" />
-                        ) : (
-                          <Icon className="size-4 shrink-0" />
-                        )}
+                        <Icon className="size-4 shrink-0" />
                         <span className="truncate text-sm flex-1">{item.title}</span>
                         {item.disabled && (
                           <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-destructive/10 text-destructive border border-destructive/20">
