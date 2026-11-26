@@ -222,6 +222,7 @@ export function GroupChatRoom({
   const isSendingRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>(messages);
   const currentUserRef = useRef(currentUser);
+  const tempIdCounterRef = useRef(0);
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -598,7 +599,7 @@ export function GroupChatRoom({
               );
               if (alreadyHas) return msg;
               const newReaction: CommentReactionItem = {
-                id: `rt-${Date.now()}-${Math.random()}`,
+                id: `rt-${userId}-${emoji}`,
                 emoji,
                 user_id: userId,
                 created_at: new Date().toISOString(),
@@ -967,7 +968,8 @@ export function GroupChatRoom({
     sendTypingStatus(false);
 
     // Create optimistic temporary message
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    tempIdCounterRef.current += 1;
+    const tempId = `temp-${currentUser.id}-${tempIdCounterRef.current}`;
     const optimisticMsg: ChatMessage = {
       id: tempId,
       user_id: currentUser.id,
@@ -1095,6 +1097,10 @@ export function GroupChatRoom({
     );
     const action = hasReacted ? "removed" : "added";
 
+    tempIdCounterRef.current += 1;
+    const optimisticReactionId = `temp-reaction-${currentUser.id}-${tempIdCounterRef.current}`;
+    const optimisticCreatedAt = new Date().toISOString();
+
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.id !== messageId) return msg;
@@ -1109,10 +1115,10 @@ export function GroupChatRoom({
           };
         } else {
           const optimisticReaction: CommentReactionItem = {
-            id: `temp-${Date.now()}`,
+            id: optimisticReactionId,
             emoji,
             user_id: currentUser.id,
-            created_at: new Date().toISOString(),
+            created_at: optimisticCreatedAt,
             user: {
               id: currentUser.id,
               full_name: currentUser.name,

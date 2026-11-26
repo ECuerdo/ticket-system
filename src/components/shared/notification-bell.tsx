@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Bell,
   BellRing,
@@ -143,6 +143,7 @@ function getNotificationIcon(type: string) {
 
 export function NotificationBell({ user }: { user: HeaderUser }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -257,11 +258,18 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
       faviconLink.dataset.originalHref = originalHref;
     }
 
+    const setFaviconHref = (href: string) => {
+      const existing = document.querySelectorAll("link[rel*='icon']");
+      const newLink = document.createElement("link");
+      newLink.rel = "shortcut icon";
+      newLink.type = "image/png";
+      newLink.href = href;
+      existing.forEach((el) => el.remove());
+      document.head.appendChild(newLink);
+    };
+
     if (unreadCount > 0) {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = originalHref;
-      img.onload = () => {
+      const drawBadgeOnCanvas = (baseImg?: HTMLImageElement) => {
         try {
           const canvas = document.createElement("canvas");
           canvas.width = 32;
@@ -269,29 +277,45 @@ export function NotificationBell({ user }: { user: HeaderUser }) {
           const ctx = canvas.getContext("2d");
           if (!ctx) return;
 
-          // Draw base favicon
-          ctx.drawImage(img, 0, 0, 32, 32);
+          if (baseImg) {
+            ctx.drawImage(baseImg, 0, 0, 32, 32);
+          } else {
+            // High-contrast clean fallback base icon
+            ctx.beginPath();
+            ctx.arc(16, 16, 14, 0, 2 * Math.PI);
+            ctx.fillStyle = "#2563eb"; // blue-600
+            ctx.fill();
+          }
 
-          // Draw red badge circle on top right
+          // Outer white border ring for high contrast separation (Messenger style)
           ctx.beginPath();
-          ctx.arc(24, 8, 7, 0, 2 * Math.PI);
+          ctx.arc(23, 9, 6.5, 0, 2 * Math.PI);
+          ctx.fillStyle = "#ffffff";
+          ctx.fill();
+
+          // Inner solid red badge dot
+          ctx.beginPath();
+          ctx.arc(23, 9, 4.5, 0, 2 * Math.PI);
           ctx.fillStyle = "#ef4444"; // red-500
           ctx.fill();
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = "#ffffff";
-          ctx.stroke();
 
-          if (faviconLink) {
-            faviconLink.href = canvas.toDataURL("image/png");
-          }
+          setFaviconHref(canvas.toDataURL("image/png"));
         } catch {
-          // Canvas error ignore
+          // ignore canvas taint errors
         }
       };
-    } else if (faviconLink && faviconLink.dataset.originalHref) {
-      faviconLink.href = faviconLink.dataset.originalHref;
+
+      const img = new Image();
+      if (originalHref.startsWith("http://") || originalHref.startsWith("https://")) {
+        img.crossOrigin = "anonymous";
+      }
+      img.onload = () => drawBadgeOnCanvas(img);
+      img.onerror = () => drawBadgeOnCanvas();
+      img.src = originalHref;
+    } else {
+      setFaviconHref(originalHref);
     }
-  }, [unreadCount]);
+  }, [unreadCount, pathname]);
 
   useEffect(() => {
     fetchNotifications();
